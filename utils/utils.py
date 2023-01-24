@@ -17,6 +17,8 @@ from torchvision.datasets.folder import IMG_EXTENSIONS
 from collections import OrderedDict
 from pathlib import Path
 from imageio.v2 import imread
+from dotmap import DotMap
+import yaml
 
 
 __all__ = [
@@ -26,7 +28,8 @@ __all__ = [
     'dataset_mean_and_std',
     'CustomOrderedDict',
     'min_max_dataset',
-    'save_model'
+    'save_model',
+    'load_yaml_as_dotmap'
 ]
 
 
@@ -227,7 +230,7 @@ def save_model(model: nn.Module,
         model_state_dict = model.state_dict()
         optimizer_state_dict = optimizer.state_dict()
 
-    elif model_state_dict or optimizer_state_dict:
+    elif (model_state_dict or optimizer_state_dict) is None:
         raise ValueError(f'Model state dict and optimizer state dict must be given as pair or not at all!')
 
     state = {'sys_argv': sys.argv,
@@ -253,6 +256,15 @@ def save_model(model: nn.Module,
 
     torch.save(state, full_path)
 
+
+def load_yaml_as_dotmap(yaml_path: str) -> DotMap:
+
+    with open(yaml_path) as f:
+        config = yaml.safe_load(f)
+
+    config = DotMap(config, _dynamic=True)
+
+    return config
 
 """
 if __name__ == '__main__':

@@ -30,7 +30,8 @@ __all__ = [
     "Transpose",
     "RandomHorizontalFlip",
     "RandomVerticalFlip",
-    "Crop"
+    "Crop",
+    'ObjectAugmentation'
 ]
 
 
@@ -92,7 +93,7 @@ class PairCompose:
         for num, transform_pair in enumerate(self.transforms):
             if 0 == len(transform_pair) > 2:
                 raise ValueError(
-                    f'For each transform pair it is only allowed with on or two transforms'
+                    f'For each transform pair it is only allowed with one or two transforms'
                     f'(or NoneType if no transform is wanted for either target or image).\n'
                     f'Got {len(transform_pair)} at index {num} with the transforms: {transform_pair}')
 
@@ -103,6 +104,7 @@ class PairCompose:
                     image = transform_pair[0](image)
                 if transform_pair[1]:
                     mask = transform_pair[1](mask)
+
             elif isinstance(transform_pair[0], FunctionalTransform) and len(transform_pair) == 1:
 
                 image, mask = transform_pair[0](image, mask)
@@ -128,8 +130,8 @@ class ConvertDtype(Transform):
         super(ConvertDtype, self).__init__()
         self.dtype = dtype
 
-    def __call__(self, image):
-        return f.convert_image_dtype(image, self.dtype)
+    def __call__(self, image: Tensor) -> Tensor:
+        return image.to(self.dtype)
 
 
 class ToTensor(Transform):
@@ -235,12 +237,11 @@ class QuasiResize(Transform):
     def __call__(self, image: Tensor) -> Tensor:
 
         if not isinstance(image, Tensor):
-            raise TypeError(f'Image must be type: Tensor. Got {type(image)} instead')
+            raise TypeError(f'Image must be a torch Tensor. Got {type(image)} instead.')
         if not len(image.shape) >= 3:
-            raise ValueError(f'Tensor is expected to have [..., H, W] shape. Got {image.shape} instead')
+            raise ValueError(f'Tensor is expected to have [..., H, W] shape. Got {image.shape} instead.')
         h, w = image.shape[-2], image.shape[-1]
 
-        # print(h, w)
         if self.size[0] == self.size[1]:
             im_size = self.size[0]
             h_scale = im_size // h if im_size // h <= self.scale else self.scale
@@ -257,17 +258,19 @@ class QuasiResize(Transform):
 
         h_pad_val = self.size[0] - image.shape[-2]
         w_pad_val = self.size[1] - image.shape[-1]
+
         padding = [0] * 4
 
         if h_pad_val:
-            padding[0] = math.ceil(h_pad_val / 2)  # left padding value
-            padding[2] = math.floor(h_pad_val / 2)  # right padding value
+            padding[2] = math.ceil(h_pad_val / 2)  # left padding value
+            padding[3] = math.floor(h_pad_val / 2)  # right padding value
 
         if w_pad_val:
-            padding[1] = math.ceil(w_pad_val / 2)  # top padding value
-            padding[3] = math.floor(w_pad_val / 2)  # bottom padding value
+            padding[0] = math.ceil(w_pad_val / 2)  # top padding value
+            padding[1] = math.floor(w_pad_val / 2)  # bottom padding value
 
         image = pad(image, pad=padding, mode=self.padding, value=self.value)
+
         return image
 
 
@@ -324,52 +327,65 @@ class UndoQuasiResize:
 
 class Standardize(Transform):
 
-    def __init__(self, mean: Tensor, std: Tensor, inplace: bool = False):
+    def __init__(self, mean: Union[List[float], float], std: [list[float], float], inplace: bool = False):
         super(Standardize, self).__init__()
 
-        if not (isinstance(mean, Tensor) or isinstance(std, Tensor)):
-            raise TypeError(f'Mean and Tensor must be a Tensor. Got {type(mean)} and {type(std)}')
-        if mean.shape != std.shape:
-            raise ValueError(f'Mean and Std must have same shape. Got {mean.shape} and {std.shape}')
+        if isinstance(mean, list) and isinstance(std, list):
+            if len(mean) != len(std):
+                raise ValueError(f'Mean and Std list must have same length. Got {len(mean)} and {len(std)}')
+        elif isinstance(mean, float) and isinstance(std, float):
+            pass
+        else:
+            raise TypeError('Mean and Std be of same type and of either type List of Float')
 
-        self.mean = mean.tolist()
-        self.std = std.tolist()
+        self.mean = mean
+        self.std = std
 
         self.inplace = inplace
 
     def __call__(self, image: Tensor) -> Tensor:
 
-        if isinstance(image, ndarray):
-            image = torch.tensor(image.transpose((2, 0, 1)), dtype=torch.float64)
-        if image.shape[-3] != len(self.mean):
-            raise ValueError(
-                f'Number of channels in image does not match. Got image shape: {image.shape} and mean and std '
-                f'shape: {len(self.mean)} & {len(self.std)}')
+        if image.shape[-3] == 3 and isinstance(self.mean, float):
+            self.mean = self.mean * 3
+
+        elif image.shape[-3] == 1 and isinstance(self.mean, list):
+            if image.shape[-3] != len(self.mean):
+                raise ValueError(
+                    f'Number of channels in image does not match. Got image shape: {image.shape} and mean and std '
+                    f'shape: {len(self.mean)} & {len(self.std)}')
+            else:
+                self.mean = [self.mean[0]]
+
         return f.normalize(image, mean=self.mean, std=self.std, inplace=self.inplace)
 
 
 class Normalize(Transform):
 
-    def __init__(self, min_max_range: Tuple[float, float], dataset_min_max: Tuple[float, float]):
+    def __init__(self, min_max_range: Tuple[float, float],
+                 dataset_min_max: Tuple[float, float],
+                 return_type: torch.dtype = None):
         super(Normalize, self).__init__()
         self.min_range, self.max_range = min_max_range
         self.min = dataset_min_max[0]
         self.max = dataset_min_max[1]
+        self.return_type = return_type
 
-    def __call__(self, image: Union[Tensor]) -> Tensor:
+    def __call__(self, image: Tensor) -> Tensor:
         """
         image = image.numpy().squeeze()
         scaler = preprocessing.MinMaxScaler(feature_range=self.feature_range)
         scaler.fit(image)
         return scaler.transform(image)
         """
+        if self.return_type:
+            image.type(self.return_type)
 
         image = image.squeeze()
 
         X_std = (image - self.min) / (self.max - self.min)
         image = X_std * (self.max_range - self.min_range) + self.min_range
 
-        return image.numpy().astype(np.uint8)
+        return image
 
 
 class MaskClassReduction(Transform):
@@ -404,13 +420,13 @@ class MaskClassReduction(Transform):
 
         self.remove_list = [x for x in self.classes if x not in self.keep_classes]
 
-    def __call__(self, mask: ndarray) -> ndarray:
+    def __call__(self, mask: Tensor) -> Tensor:
 
         for class_, new_val in zip(self.remove_list, self.replace_val):
             if self.replace_val:
-                mask = np.where(mask == class_, new_val, mask)
+                mask = torch.where(mask == class_, new_val, mask)
 
-        return mask.transpose((2, 0, 1))
+        return mask
 
 
 class Transpose(Transform):
@@ -537,7 +553,50 @@ class RandomRotation(FunctionalTransform):
         return image, mask
 
 
-class ObjectAugmentation(Transform):
+class BrightnessAdjust(FunctionalTransform):
+
+    def __init__(self, p: float = 0.5, brightness_range: Tuple[float, float] = (1, 1)):
+        super(BrightnessAdjust, self).__init__()
+        if 0 >= p >= 1:
+            raise ValueError(f'Probability must be between 0.0 and 1.0. Got {p}')
+        if any(brightness_range) < 0:
+            raise ValueError(f'brightness_range values must be non-negative. Got {brightness_range}')
+        if brightness_range[0] > brightness_range[1]:
+            raise ValueError(f'Brightness value at index 0 must be smaller than that of index 1. Got {brightness_range}')
+        self.p = p
+        self.brightness = brightness_range
+
+    def __call__(self, image: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
+
+        if torch.rand(1) < self.p:
+            brightness_factor = random.uniform(self.brightness[0], self.brightness[1])
+            image = f.adjust_brightness(image, brightness_factor)
+
+        return image, mask
+
+
+class ContrastAdjust(FunctionalTransform):
+
+    def __init__(self, p: float = 0.5, contrast_range: Tuple[float, float] = (1, 1)):
+        super(ContrastAdjust, self).__init__()
+        if 0 >= p >= 1:
+            raise ValueError(f'Probability must be between 0.0 and 1.0. Got {p}')
+        if any(contrast_range) < 0:
+            raise ValueError(f'brightness_range values must be non-negative. Got {contrast_range}')
+        if contrast_range[0] > contrast_range[1]:
+            raise ValueError(f'Contrast value at index 0 must be smaller than that of index 1. Got {contrast_range}')
+        self.p = p
+        self.brightness = contrast_range
+
+    def __call__(self, image: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
+        if torch.rand(1) < self.p:
+            contrast_factor = random.uniform(self.brightness[0], self.brightness[1])
+            image = f.adjust_contrast(image, contrast_factor)
+
+        return image, mask
+
+
+class ObjectAugmentation(FunctionalTransform):
 
     def __init__(self, augmentation_methods: List[FunctionalTransform],
                  ):
@@ -553,8 +612,9 @@ class ObjectAugmentation(Transform):
 
     def _background_inpainting(self, parsed_image: Tensor) -> Tensor:
 
-        defect_image = np.array(parsed_image[:, :, 0])
-        mask = torch.where(parsed_image == 0, 1, 0)[:, :, 0]
+        defect_image = np.array(parsed_image[0, :, :])
+        mask = torch.where(parsed_image[0, :, :] == 0, 1, 0)
+
         mask = self.__mask_padding(mask, 3)
 
         inpainted = inpaint.inpaint_biharmonic(defect_image, mask.numpy(), channel_axis=None)
@@ -567,8 +627,10 @@ class ObjectAugmentation(Transform):
 
             inpainted[x, y] = random.uniform(float(min_), float(max_))
         """
+        inpainted = torch.from_numpy(np.expand_dims(inpainted, axis=0))
+        inpainted = torch.stack((inpainted, inpainted, inpainted), dim=1).squeeze()
 
-        return torch.from_numpy(inpainted)
+        return inpainted
 
     def _object_augmentation(self, obj_image, obj_mask) -> Tuple[Tensor, Tensor]:
 
@@ -580,37 +642,39 @@ class ObjectAugmentation(Transform):
     def __call__(self, image: Tensor, mask: Tensor):
 
         new_mask = torch.zeros(mask.shape)
+
         image1 = self._image_parsing(image, mask)
         inpainted_image = self._background_inpainting(image1) * 255
-        inpainted_image_orig = inpainted_image
-        img_mask, island_count = measure.label(mask, background=0, return_num=True, connectivity=1)
+        inpainted_image_orig = inpainted_image.clone().detach()
 
-        #img_islands, mask_islands, bounding_box = [], [], []
+        img_mask, island_count = measure.label(mask.numpy()[0, :, :], background=0, return_num=True, connectivity=1)
+
         for i in range(island_count - 1):
 
             pixel_island = torch.where(torch.from_numpy(img_mask) == i + 1)
 
             x, y = torch.min(pixel_island[0]), torch.min(pixel_island[1])
-            x2, y2 = torch.max(pixel_island[0]), torch.max(pixel_island[1])
+            x2, y2 = torch.max(pixel_island[0]) + 1, torch.max(pixel_island[1]) + 1
 
-            im, msk = self._object_augmentation(image[x:x2, y:y2], mask[x:x2, y:y2])
+            im, msk = self._object_augmentation(image[:, x:x2, y:y2], mask[0, x:x2, y:y2])
 
-            inpainted_image[x:x2, y:y2] = torch.where(msk[:, :, 0] == 1, im[:, :, 0], inpainted_image[x:x2, y:y2])
-            new_mask[x:x2, y:y2] = msk
-
-
-        fig, ax = plt.subplots(1, 6)
+            inpainted_image[:, x:x2, y:y2] = torch.where(msk[:, :] == 1, im[:, :, :], inpainted_image[:, x:x2, y:y2])
+            new_mask[:, x:x2, y:y2] = msk[:, :]
+        """
+        fig, ax = plt.subplots(6, 1)
         min, max = torch.min(image[:, :, 0]), torch.max(image[:, :, 0])
 
-        ax[0].imshow(image[:, :, 0], cmap='jet', vmin=min, vmax=max, label='Original Image')
-        ax[1].imshow(image1[:, :, 0], cmap='jet', vmin=min, vmax=max, label='Parsed image')
-        ax[2].imshow(inpainted_image_orig, cmap='jet', vmin=min, vmax=max, label='Inpainted')
-        ax[3].imshow(mask[:, :, 0], cmap='jet', label='Original mask')
+        ax[0].imshow(image[0, :, :], cmap='jet', vmin=min, vmax=max, label='Original Image')
+        ax[1].imshow(image1[0, :, :], cmap='jet', vmin=min, vmax=max, label='Parsed image')
+        ax[2].imshow(inpainted_image_orig[0, :, :], cmap='jet', vmin=min, vmax=max, label='Inpainted')
+        ax[3].imshow(mask[0, :, :], cmap='jet', label='Original mask', vmin=0, vmax=1)
 
-        ax[4].imshow(inpainted_image, cmap='jet', vmin=min, vmax=max, label='Assemble Image')
-        ax[5].imshow(new_mask[:, :, 0], cmap='jet', vmin=min, vmax=max, label='Assemble Mask')
+        ax[4].imshow(inpainted_image[0, :, :], cmap='jet', vmin=min, vmax=max, label='Assemble Image')
+        ax[5].imshow(new_mask[0, :, :], cmap='jet', vmin=0, vmax=1, label='Assemble Mask')
         plt.show()
+        """
 
+        return inpainted_image, new_mask
 
     def __mask_padding(self, mask, value: int = 1) -> Tensor:
         mask_copy = torch.zeros(mask.shape)
@@ -626,13 +690,39 @@ class ObjectAugmentation(Transform):
 if __name__ == '__main__':
     from imageio.v2 import imread
 
-    im_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\data\\MAD6400_2011-06-01_manda_59_0_53.png'
-    msk_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\label\\MAD6400_2011-06-01_manda_59_0_53.png'
-    im = torch.from_numpy(np.array(imread(im_path)))
-    msk = torch.from_numpy(np.array(imread(msk_path)))
+    im_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\data\\MAD6400_2015-08-12_manda_59_94_235.png'
+    msk_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\label\\MAD6400_2015-08-12_manda_59_94_235.png'
+    im = torch.from_numpy(np.array(imread(im_path)).transpose((2, 0, 1)))
+    msk = torch.from_numpy(np.array(imread(msk_path)).transpose((2, 0, 1)))
 
-    transforms = [RandomVerticalFlip(0.2), RandomHorizontalFlip(0.2)]
+    bright_adjust = BrightnessAdjust(0.99, (0.9, 0.9))
+    contrast_adjust = ContrastAdjust(0.99, (1.5, 1.5))
+
+    fig, ax = plt.subplots(2, 1)
+
+    min_, max_ = torch.min(im), torch.max(im)
+
+    ax[0].imshow(im[0, :, :], cmap='jet', vmin=min_, vmax=max_)
+    im, msk = bright_adjust(im, msk)
+    im, msk = contrast_adjust(im, msk)
+
+    ax[1].imshow(im[0, :, :], cmap='jet', vmin=min_, vmax=max_)
+    plt.show()
+    """
+    transforms = [RandomVerticalFlip(0.9), RandomHorizontalFlip(0.9)]
 
     objaug = ObjectAugmentation(transforms)
 
     objaug(im, msk)
+
+    cast = Normalize((0, 1), (0, 255), return_type=torch.float32)
+    print(im.dtype)
+    fig, ax = plt.subplots(2, 1)
+    ax[0].imshow(im[0, :, :], cmap='jet')
+    im = cast(im)
+    print(im.dtype)
+    ax[1].imshow(im[0, :, :], cmap='jet')
+    print(im)
+    plt.show()
+    """
+

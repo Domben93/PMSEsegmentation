@@ -90,7 +90,6 @@ def main():
 
     pmse_train_data = PMSE_Dataset(Settings.CompleteSet.DATA,
                                    Settings.CompleteSet.MASKS,
-                                   transform=t.ToTensor(),
                                    disable_warnings=True)
 
     data_loader = DataLoader(pmse_train_data, batch_size=1)

@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/PMSEsegmentation.iml" filepath="$PROJECT_DIR$/.idea/PMSEsegmentation.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/Test.iml" filepath="$PROJECT_DIR$/.idea/Test.iml" />
     </modules>
   </component>
 </project>

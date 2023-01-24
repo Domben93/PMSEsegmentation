@@ -49,7 +49,6 @@ class BinaryDiceLoss(nn.Module):
 
     def forward(self, predict: Tensor, target: Tensor):
 
-
         if predict.shape[0] != target.shape[0]:
             raise ValueError(f'Predicted Tensor must have same shape as target Tensor: '
                              f'Predicted shape ({predict.shape[0]}) != ({target.shape[0]}) Target shape')
@@ -74,18 +73,23 @@ class WeightedBCE(nn.Module):
         super(WeightedBCE, self).__init__()
 
 
+# From https://github.com/clcarwin/focal_loss_pytorch/blob/master/focalloss.py
+
 class FocalLoss(nn.Module):
 
-    def __init__(self, gamma, eps):
+    def __init__(self, gamma: float = 0, alpha: float = None, eps: float = 1e-8, output: str = 'mean'):
         super(FocalLoss, self).__init__()
-        self.gamme = gamma
+        self.gamma = gamma
+        self.alpha = alpha
         self.eps = eps
+        self.output = output
 
     def forward(self, predicted, label):
 
         bce = F.binary_cross_entropy(predicted, label)
 
-        return
+        return None
+
 
 class WeightedSoftDiceLoss(nn.Module):
 
@@ -149,6 +153,7 @@ class DiceCoefficient(nn.Module):
         union = (pred.sum(dim=1) + label.sum(dim=1))
 
         return (2 * intersection + self.smooth) / (union + self.smooth)
+
 
 if __name__ == '__main__':
 

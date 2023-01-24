@@ -1,0 +1,28 @@
+
+data_path:
+  path_complete: C:\Users\dombe\PycharmProjects\Test\dataset\Complete
+  path_train: C:\Users\dombe\PycharmProjects\Test\dataset\Train
+  path_validate: C:\Users\dombe\PycharmProjects\Test\dataset\Validation
+  path_test: C:\Users\dombe\PycharmProjects\Test\dataset\Test
+
+
+data_split:
+  train_val_test_split: [0.6, 0.2, 0.2]
+  random_split: True # If True samples are randomly selected for the different dataset
+  seed: 42  # for reproducibility
+  stratified_split: True  # train, test and validation data has equal samples from each data. Set false
+  sample_size_split: True
+  sample_size_range: [ 4, 10 ]  # Into 3 different size ranges [0-3, 4-9, 10-inf]
+  transform: True  # Performs standardization on the dataset as well as normalization
+  mask_reduction: True  # reduce mask to binary (i.e., background (0) and PMSE (1))
+
+  square_split: True
+  horizontal_split:  # If square_split is True horizontal is overridden. Default is null
+  vertical_split:  # If square_split is True horizontal is overridden. default is null
+  split_overlap: 0.0
+  last_min_overlap: 0
+
+data_vars:
+  mean: 9.2158  # if None, it will be calculated. May take a lot of time for big datasets. Only calculated from train dataset
+  std: 1.5720  # if None, it will be calculated. May take a lot of time for big datasets. Only calculated from train dataset
+

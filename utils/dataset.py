@@ -1,14 +1,12 @@
 import os.path
 import random
-
 import numpy as np
 import torch
 import yaml
 from torch.utils.data import Dataset, DataLoader
-from splitdata2 import SplitSegData
-from transforms import *
+from .splitdata2 import SplitSegData
+from .transforms import *
 from typing import Any, Callable, Optional, Tuple, TypeVar, Union
-from pathlib import Path
 from imageio.v2 import imread
 from torch import Tensor
 
@@ -24,10 +22,12 @@ class PMSE_Dataset(Dataset):
                  square_split: bool = False,
                  percent_overlap: float = None,
                  last_min_overlap: Union[int, float] = None,
+                 make_mask_one_dim: bool = True,
                  **kwargs):
 
         self.transform = transform
         self.target_transform = target_transform
+        self.reduced_dim_mask = make_mask_one_dim
 
         self.dataset = SplitSegData(image_dir=image_dir,
                                     label_dir=label_dir,
@@ -41,15 +41,12 @@ class PMSE_Dataset(Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> Tuple[Tensor, Tensor, str]:
         image, mask, name = self.dataset[item]
-        image = np.array([image])
-        mask = np.array([mask])
 
-        print(image.shape)
-        image = image.transpose((1, 2, 0))
-        mask = mask.transpose((1, 2, 0))
-        print(image.shape)
+        image = torch.from_numpy(image.transpose((2, 0, 1)))
+        mask = torch.from_numpy(mask.transpose((2, 0, 1)))
+
         if self.transform:
             if isinstance(self.transform, PairCompose):
                 image, mask = self.transform(image, mask)
@@ -57,6 +54,9 @@ class PMSE_Dataset(Dataset):
                 image = self.transform(image)
                 if self.target_transform:
                     mask = self.transform(mask)
+
+        if self.reduced_dim_mask:
+            mask = mask[0:1, :, :]
 
         return image, mask, name
 
@@ -73,7 +73,8 @@ class PMSEDatasetPresaved(Dataset):
     def __init__(self, data_path: str,
                  label_path: str,
                  transform: Optional[Callable] = None,
-                 target_transform: Optional[Callable] = None
+                 target_transform: Optional[Callable] = None,
+                 make_mask_one_dim: bool = True
                  ):
         super(PMSEDatasetPresaved, self).__init__()
         self.data_path = data_path
@@ -84,6 +85,7 @@ class PMSEDatasetPresaved(Dataset):
 
         self.transform = transform
         self.target_transform = target_transform
+        self.reduced_dim_mask = make_mask_one_dim
 
         for data in self.data:
             if not data.endswith('.png'):
@@ -94,6 +96,7 @@ class PMSEDatasetPresaved(Dataset):
                              'names.')
 
     def __getitem__(self, item) -> Tuple[Tensor, Tensor]:
+
         data_name = self.data[item]
         label_name = self.labels[item]
 
@@ -117,6 +120,17 @@ class PMSEDatasetPresaved(Dataset):
             image = image[:, :, rnd_num:rnd_num + h]
             label = label[:, :, rnd_num:rnd_num + h]
 
+        if self.transform:
+            if isinstance(self.transform, PairCompose):
+                image, label = self.transform(image, label)
+            else:
+                image = self.transform(image)
+                if self.target_transform:
+                    label = self.transform(label)
+
+        if self.reduced_dim_mask:
+            label = label[0:1, :, :]
+
         return image, label
 
     def __len__(self):
@@ -133,27 +147,17 @@ def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoa
         config = yaml.safe_load(f)
 
     if mode == valid_modes[0]:
-        data_path = config['path_train']
+        data_path = config['dataset']['path_train']
         pmse_data = os.path.join(data_path, 'data')
         pmse_label = os.path.join(data_path, 'label')
-
-        dataset = PMSEDatasetPresaved(pmse_data,
-                                      pmse_label,
-                                      transform=transforms)
 
     elif mode == valid_modes[1]:
-        data_path = config['path_validate']
+        data_path = config['dataset']['path_validate']
         pmse_data = os.path.join(data_path, 'data')
         pmse_label = os.path.join(data_path, 'label')
 
-        dataset = PMSE_Dataset(pmse_data,
-                               pmse_label,
-                               transform=transforms,
-                               square_split=True,
-                               percent_overlap=.0)
-
     elif mode == valid_modes[2]:
-        data_path = config['path_test']
+        data_path = config['dataset']['path_test']
         pmse_data = os.path.join(data_path, 'data')
         pmse_label = os.path.join(data_path, 'label')
 
@@ -161,9 +165,14 @@ def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoa
         raise Exception
 
     if mode == valid_modes[0]:
-        dataset = PMSEDatasetPresaved(pmse_data,
-                                      pmse_label,
-                                      transform=transforms)
+        dataset = PMSE_Dataset(pmse_data,
+                               pmse_label,
+                               transform=transforms,
+                               square_split=True,
+                               percent_overlap=.3,
+                               last_min_overlap=0,
+                               lock_vertical=True
+                               )
 
         dataloader = DataLoader(dataset,
                                 batch_size=config['dataloader']['batch_size'],
@@ -174,7 +183,9 @@ def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoa
                                pmse_label,
                                transform=transforms,
                                square_split=True,
-                               percent_overlap=.0)
+                               percent_overlap=.0,
+                               last_min_overlap=0,
+                               lock_vertical=True)
 
         dataloader = DataLoader(dataset,
                                 batch_size=1,
@@ -183,13 +194,3 @@ def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoa
 
     return dataloader
 
-
-if __name__ == '__main__':
-    data_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Complete\\data'
-    label_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Complete\\label'
-
-    dataset_matload = PMSE_Dataset(data_path, label_path, transform=ToTensor())
-
-    print(dataset_matload[0][0].shape)
-    #dataset = PMSEDatasetPresaved(data_path, label_path)
-    #i = dataset[0]

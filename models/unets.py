@@ -136,13 +136,25 @@ class PSPUNet(BaseModel):
 
 class ResUNet(BaseModel):
 
-    def __init__(self):
-        super(ResUNet, self).__init__()
+    def __init__(self, in_channels: int = 3,
+                 out_channels: int = 1,
+                 initial_features: int = 32):
+        super(ResUNet, self).__init__(in_channels=in_channels,
+                                      out_channels=out_channels)
+
+        self.
+
 
         self.encoder1 = nn.Sequential()
 
     def forward(self, x: Tensor) -> Tensor:
         pass
+
+class UnetPlussPluss(BaseModel):
+
+    def __init__(self):
+        super(UnetPlussPluss, self).__init__()
+
 
 
 class ResUNetA(nn.Module):

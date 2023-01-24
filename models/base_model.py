@@ -20,8 +20,7 @@ class BaseModel(nn.Module):
         raise NotImplementedError
 
     def init_random_weights(self,
-                            module: nn.Module,
-                            init_func: Callable,
+                            init_func: Callable = nn.init.xavier_uniform_,
                             init_layer: Union[List, Any] = nn.Conv2d,
                             prefix: Optional[str] = '') -> NoReturn:
         """
@@ -36,16 +35,16 @@ class BaseModel(nn.Module):
             prefix: Do NOT use this argument! this is only for internal use when iterating through nested modules.
 
         """
-
+        print(f'Initiating layers with random values using {type(init_func).__name__}')
         if isinstance(init_layer, list):
             init_layer = tuple(init_layer)
 
         state_dict_copy = self.state_dict()
 
-        children = module.named_children()
+        children = self.named_children()
 
         for child_name, child_module in children:
-            if isinstance(module.get_submodule(child_name), nn.Sequential):
+            if isinstance(self.get_submodule(child_name), nn.Sequential):
                 for layer_name, layer_type in child_module.named_children():
                     if isinstance(layer_type, init_layer):
                         if not prefix:
@@ -62,7 +61,7 @@ class BaseModel(nn.Module):
 
         self.load_state_dict(state_dict_copy)
 
-    def init_weigths_by_layer(self, old_model: nn.Module,
+    def init_weigths_by_layer(self, old_model: Union[nn.Module, dict],
                               model_block_linkage: Union[List[int], OrderedDict[int, int]] = 'auto',
                               rest_random: bool = True,
                               rest_random_func: Callable = nn.init.xavier_uniform_) -> NoReturn:
@@ -78,12 +77,14 @@ class BaseModel(nn.Module):
             rest_random_func:
 
         """
-
-        old_blocks = list(old_model.children())
-        new_blocks = list(self.named_children())
+        if isinstance(old_model, nn.Module):
+            old_statedict_copy = old_model.state_dict()
+        elif isinstance(old_model, dict):
+            old_statedict_copy = old_model
+        else:
+            raise TypeError('old model must be of type nn.Module or dict (nn.Module.state_dict())')
 
         new_statedict_copy = self.state_dict()
-        old_statedict_copy = old_model.state_dict()
 
         if model_block_linkage == 'auto':
             for new_block_name, new_block in self.named_children():
@@ -160,6 +161,8 @@ class BaseModel(nn.Module):
             keys: Models OrderedDict keys. Specify which layers to initiate
 
         """
+        print(f'Initiating pre-trained weights for {type(self).__name__}.')
+
         new_state_dict = self.state_dict()
 
         if isinstance(weights, OrderedDict):
@@ -217,7 +220,8 @@ class BaseModel(nn.Module):
             assert max(freeze_block_list) <= self.blocks - 1, f'block values in list cannot be bigger than the size' \
                                                               f' number of blocks in the model: {self.blocks - 1}.'
         else:
-            raise TypeError('Expected string option "all" or a list of integers to the blocks to freeeze')
+            raise TypeError(f'Expected string option "all" or a list of integers to the blocks to freeeze. '
+                            f'Got {type(freeze_blocks)}.')
 
         blocks = self.named_children()
 
@@ -265,7 +269,7 @@ class BaseModel(nn.Module):
                 parallel_block(block_module, block_name, freeze_layer_types)
 
             else:
-                raise Exception('Encountered unknown case when iterating over blocks and layers of the model. block '
+                raise Exception('Encountered unknown case when iterating over blocks and layers of the model. Block '
                                 'must either be a sequential or a module with children modules.')
 
     def model_layers(self, block: Union[List[int], int] = None):

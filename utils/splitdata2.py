@@ -2,7 +2,7 @@ import math
 import os
 import random
 import warnings
-from utils import *
+from .utils import *
 from typing import Tuple, Union, Dict, Any, NoReturn
 import numpy as np
 from tqdm import tqdm
@@ -78,6 +78,10 @@ class SplitSegData:
 
         if kwargs.get('disable_warnings') is True:
             warnings.filterwarnings('ignore')
+        if kwargs.get('lock_vertical') is True:
+            self.lock_vertical = True
+        else:
+            self.lock_vertical = False
 
         if not os.path.exists(self.image_dir):
             raise FileNotFoundError(f'Could not find: {self.image_dir}')
@@ -189,6 +193,9 @@ class SplitSegData:
 
             if self.square_split:
                 self.horizontal_split = self.vertical_split = min(image.shape[0], image.shape[1])
+                if self.lock_vertical:
+                    self.vertical_split = image.shape[0]
+
                 horizontal_pixel_overlap = int(
                     self.horizontal_split - self.horizontal_split * (1 - self.percentage_overlap))
 
