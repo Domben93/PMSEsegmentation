@@ -1,0 +1,39 @@
+dataset:
+  path_complete: ../dataset/Complete/
+  path_train: ../dataset/Train/
+  path_validate: ../dataset/Validation/
+  path_test: ../dataset/Test/
+  max_scale: 2 # max allowed scaling of image
+  resize_shape: [ 64, 64 ]  # resize tto shape 64x64
+  padding_type: 'constant'  # padding mode ['constant', 'reflect', 'replicate' or 'circular'] default constant value: 0
+
+model:
+  path: ../models/unets.py
+  model_type: unet
+  save_path: ../weights/
+
+model_init:
+    pre_trained_weigths: None # path pretrained weights
+    freeze_layers: all # layers to freeze. If pretrained weights are unspecified this is ignored (default: all layers)
+    random_init: uniform # random initiation type. IGNORED if pretrained weights are specified
+    in_channels: 1 # 3 for rgb. Note that
+    channel: 1 # if in_channels is 1 and pretrained weights has 3 channels channel 1 is chosen
+
+dataloader:
+  batch_size: 16
+  num_workers: 8
+  shuffle: True
+
+# Hyper parameters
+optimizer:
+  loss_type: BCE
+  optim_type: Adam #optimizer type
+  learning_rate: 1e-4 # Initial learning rate
+  epochs: 120
+  # momentum: 0.9  # Uncomment if wanted to be used. Not available for Adam and other optimizer algorithms
+  weight_decay: 0.01
+
+learning_schduler:
+  step_size: 30 # lr step every n epochs
+  gamma: 0.3 # lr = gamma * lr every step_size
+  max_epochs: -1 # -1 is for not specified
