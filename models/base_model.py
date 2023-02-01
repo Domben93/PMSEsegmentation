@@ -20,9 +20,10 @@ class BaseModel(nn.Module):
         raise NotImplementedError
 
     def init_random_weights(self,
+                            module: nn.Module,
                             init_func: Callable = nn.init.xavier_uniform_,
                             init_layer: Union[List, Any] = nn.Conv2d,
-                            prefix: Optional[str] = '') -> NoReturn:
+                            _prefix: Optional[str] = None) -> NoReturn:
         """
         Initate weights of model with the specified initiator function.
         Note that in order for this to work all layers of the model must be in a torch.nn.Sequential.
@@ -32,34 +33,41 @@ class BaseModel(nn.Module):
             module: the model (torch.nn.Module) to initiate the random values on
             init_func: torch.nn.init.**** initiator function (e.g. xavier_uniform_)
             init_layer: layer type to initiate (e.g. nn.Conv2d)
-            prefix: Do NOT use this argument! this is only for internal use when iterating through nested modules.
+            _prefix: Do NOT use this argument! this is only for internal use when iterating through nested modules.
 
         """
-        print(f'Initiating layers with random values using {type(init_func).__name__}')
+
         if isinstance(init_layer, list):
             init_layer = tuple(init_layer)
 
-        state_dict_copy = self.state_dict()
+        state_dict_copy = module.state_dict()
 
-        children = self.named_children()
+        children = module.named_children()
 
         for child_name, child_module in children:
-            if isinstance(self.get_submodule(child_name), nn.Sequential):
+
+            if isinstance(module.get_submodule(child_name), nn.Sequential):
                 for layer_name, layer_type in child_module.named_children():
                     if isinstance(layer_type, init_layer):
-                        if not prefix:
+                        if not _prefix:
                             key = child_name + '.' + layer_name + '.weight'
                         else:
-                            key = prefix + '.' + child_name + '.' + layer_name + '.weight'
-                        state_dict_copy[key] = init_func(torch.empty(state_dict_copy[key].shape))
-            else:
-                if not prefix:
-                    new_prefix = child_name
-                else:
-                    new_prefix = prefix + '.' + child_name
-                self.init_random_weights(child_module, init_func, init_layer, prefix=new_prefix)
+                            key = _prefix + '.' + child_name + '.' + layer_name + '.weight'
 
-        self.load_state_dict(state_dict_copy)
+                        state_dict_copy[key] = init_func(torch.empty(state_dict_copy[key].shape))
+
+            else:
+                if isinstance(module.get_submodule(child_name), nn.Module): # New module found, resetting prefix
+                    new_prefix = ''
+                else:
+                    if not _prefix:
+                        new_prefix = child_name
+                    else:
+                        new_prefix = _prefix + '.' + child_name
+
+                self.init_random_weights(child_module, init_func, init_layer, _prefix=new_prefix)
+
+        module.load_state_dict(state_dict_copy)
 
     def init_weigths_by_layer(self, old_model: Union[nn.Module, dict],
                               model_block_linkage: Union[List[int], OrderedDict[int, int]] = 'auto',
@@ -105,32 +113,37 @@ class BaseModel(nn.Module):
             old_keys = list(old_statedict_copy)
 
             for num in tqdm(model_block_linkage, desc='Assigning pretrained weights to model'):
-                print(old_statedict_copy[old_keys[num]])
+                # print(old_statedict_copy[old_keys[num]])
                 new_statedict_copy[new_keys[num]] = old_statedict_copy[old_keys[num]]
 
         elif isinstance(model_block_linkage, dict):
             raise NotImplementedError('Weight initiation using dict not yet supported.')
-            #for key, value in model_block_linkage.items():
-                #if key > len(old_blocks) or value > len(new_blocks):
-                #    raise ValueError(
-                #        'Specified linkage dict has values that exceeds the number of blocks in the models')
-                #new_blocks[key].load_state_dict(old_blocks[value].state_dict())
+            # for key, value in model_block_linkage.items():
+            # if key > len(old_blocks) or value > len(new_blocks):
+            #    raise ValueError(
+            #        'Specified linkage dict has values that exceeds the number of blocks in the models')
+            # new_blocks[key].load_state_dict(old_blocks[value].state_dict())
         else:
             raise TypeError(f'model_block_linkage must be either "auto",'
                             f' a list or a dict. Got {type(model_block_linkage)}')
 
         if rest_random:
-            print(f'Initializing other layers weights using: {rest_random_func.__name__}')
-
             if isinstance(model_block_linkage, list):
 
                 new_keys = list(new_statedict_copy)
-                old_keys = list(old_statedict_copy)
 
                 init_list = [item for item in [i for i in range(len(list(self.state_dict())))]
                              if item not in model_block_linkage]
+                print([new_keys[i] for i in init_list])
                 for num in tqdm(init_list, desc=f'Initiating other layers weights using: {rest_random_func.__name__}'):
-                    new_statedict_copy[new_keys[num]] = rest_random_func(torch.empty(new_statedict_copy[new_keys[num]].shape))
+
+                    if isinstance(self.get_submodule(new_keys[num].rsplit('.', 1)[-2]), nn.Conv2d):
+
+                        if len(new_statedict_copy[new_keys[num]].shape) <= 1:
+                            continue
+                        print(new_statedict_copy[new_keys[num]].shape)
+                        print(new_keys[num])
+                        new_statedict_copy[new_keys[num]] = rest_random_func(torch.empty(new_statedict_copy[new_keys[num]].shape))
 
         self.load_state_dict(new_statedict_copy)
 

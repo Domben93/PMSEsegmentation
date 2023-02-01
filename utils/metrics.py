@@ -1,10 +1,172 @@
+import math
+from typing import List, NoReturn
+
 import torch
 import torch.nn as nn
 import torchmetrics
 from torch import Tensor
 import numpy as np
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
+from torchmetrics.classification import BinaryJaccardIndex
+from torchmetrics.functional.classification import *
 from math import isnan
+
+
+class SegMets(nn.Module):
+    """
+    Mean Intersection over Union for binary class
+    calculates the IoU of batch by calling forward (__call__). To get mean IoU
+    one can call compute after all batches has gone through the model pipeline.
+    NB! remember to call reset if class is to be used over more than one epoch.
+    Can also return loss if specified in compute when getting batch loss; call
+    reset after each batch if doing so.
+    """
+
+    def __init__(self):
+        super(SegMets, self).__init__()
+
+        self._store_res = {}
+
+    def forward(self, predicted: torch.Tensor, label: torch.Tensor, data_info: list):
+        """
+
+        Args:
+            predicted: Predicted tensor [B, H, W] or [B, 1, H, W]
+            label: label tensor [B, H, W] or [B, 1, H, W]
+            data_info: Any pickle
+
+        """
+        if predicted.shape != label.shape:
+            raise ValueError(f'shape of predicted tensor and label must be of same shape. Got {predicted.shape} and '
+                             f'{label.shape} respectively')
+
+        predicted = predicted.view(predicted.shape[0], -1)
+        label = label.view(label.shape[0], -1)
+
+        for num, im in enumerate(data_info):
+            if im in self._store_res:
+                self._store_res[im]['predicted'] = torch.cat(
+                    (predicted[num, :].unsqueeze(dim=0), self._store_res[im]['predicted']))
+                self._store_res[im]['label'] = torch.cat((label[num, :].unsqueeze(dim=0), self._store_res[im]['label']))
+            else:
+                self._store_res[im] = {}
+                self._store_res[im]['predicted'] = predicted[num, :].unsqueeze(dim=0)
+                self._store_res[im]['label'] = label[num, :].unsqueeze(dim=0)
+
+    def mIoU(self, threshold: float = 0.5, ignore_index: int = None) -> float:
+        """
+        calculates the mean IoU of all the data that has been given
+        by dividing by the number of batches i.e. number of times the forward
+        method has been called
+        Args:
+            threshold:
+            ignore_index:
+        Returns:
+        """
+
+        self.__check_storage()
+
+        num_imgs = len(list(self._store_res.keys()))
+        tot_jacc = 0
+
+        for key in self._store_res.keys():
+
+            jacc = binary_jaccard_index(self._store_res[key]['predicted'], self._store_res[key]['label'],
+                                        threshold=threshold,
+                                        ignore_index=ignore_index).item()
+
+            if math.isnan(jacc):
+                jacc = 1.0
+
+            tot_jacc += jacc
+
+        tot_jacc = tot_jacc / num_imgs
+
+        if math.isnan(tot_jacc):
+            tot_jacc = 0.0
+
+        return tot_jacc
+
+    def auc(self) -> float:
+        """
+
+        Returns:
+
+        """
+        num_imgs = len(list(self._store_res.keys()))
+        tot_auc = 0
+
+        for key in self._store_res.keys():
+            auc = binary_auroc(self._store_res[key]['predicted'], self._store_res[key]['label'])
+
+            if math.isnan(auc):
+                raise ValueError('Nan value detected')
+
+            tot_auc += auc
+
+        return tot_auc / num_imgs
+
+    def accuracy(self, threshold: float = 0.5, ignore_index: int = None):
+        """
+
+        Returns:
+
+        """
+        num_imgs = len(list(self._store_res.keys()))
+        tot_acc = 0
+
+        for key in self._store_res.keys():
+            acc = binary_accuracy(self._store_res[key]['predicted'], self._store_res[key]['label'],
+                                  threshold=threshold,
+                                  ignore_index=ignore_index)
+
+            if math.isnan(acc):
+                raise ValueError('Nan value detected')
+
+            tot_acc += acc
+
+        return tot_acc / num_imgs
+
+    def precision(self, threshold: float = 0.5, ignore_index: int = None):
+
+        num_imgs = len(list(self._store_res.keys()))
+        tot_prec = 0
+
+        for key in self._store_res.keys():
+            prec = binary_precision(self._store_res[key]['predicted'], self._store_res[key]['label'],
+                                    threshold=threshold,
+                                    ignore_index=ignore_index)
+
+            if math.isnan(prec):
+                raise ValueError('Nan value detected')
+
+            tot_prec += prec
+
+        return tot_prec / num_imgs
+
+    def dice(self, threshold: float = 0.5, ignore_index: int = None):
+
+        num_imgs = len(list(self._store_res.keys()))
+        tot_dice = 0
+
+        for key in self._store_res.keys():
+            dice = binary_f1_score(self._store_res[key]['predicted'], self._store_res[key]['label'],
+                                   threshold=threshold,
+                                   ignore_index=ignore_index)
+
+            if math.isnan(dice):
+                raise ValueError('Nan value detected')
+
+            tot_dice += dice
+
+        return tot_dice / num_imgs
+
+    def reset(self):
+        self._store_res = {}
+
+    def __check_storage(self):
+        if not bool(self._store_res):
+            raise RuntimeError(f'No values available for computation.')
 
 
 class mIoU(nn.Module):
@@ -17,20 +179,26 @@ class mIoU(nn.Module):
     reset after each batch if doing so.
     """
 
-    def __init__(self, eps=1e-4, threshold=0.5):
+    def __init__(self, eps=1e-4, threshold=0.5, reset_after_compute=False, device=None):
         super(mIoU, self).__init__()
-        self.batch_count = 0
-        self.iou = 0
-        self.epsilon = eps
-        self.threshold = threshold
 
-    def forward(self, predicted: torch.Tensor, label: torch.Tensor):
+        self.epsilon = eps
+        self.automatic_reset = reset_after_compute
+        self.batch_count = 0
+        self.iou = {}
+        self.jaccard = BinaryJaccardIndex(threshold=threshold)
+        self.device = device
+
+        if self.device:
+            self.jaccard.cuda(device)
+
+    def forward(self, predicted: torch.Tensor, label: torch.Tensor, data_info: list):
         """
-        calculate the IoU of the batch when called
+        calculate the mean IoU for image wise
         Args:
             predicted: Predicted tensor [B, H, W] or [B, 1, H, W]
             label: label tensor [B, H, W] or [B, 1, H, W]
-
+            data_info:
         Stores the IoU of batch internally in class variables
 
         """
@@ -38,16 +206,24 @@ class mIoU(nn.Module):
             raise ValueError(f'shape of predicted tensor and label must be of same shape. Got {predicted.shape} and '
                              f'{label.shape} respectively')
 
-        predicted = (predicted.view(-1) >= self.threshold).float()
-        label = label.view(-1)
+        predicted = predicted.view(predicted.shape[0], -1)
+        label = label.view(label.shape[0], -1)
 
-        intersection = torch.sum((predicted * label)).item()
-        union = torch.sum((predicted + label)).item() - intersection
+        if self.device:
+            if not (predicted.is_cuda and label.is_cuda):
+                raise RuntimeError('The predicted Tensor and the Mask Tensor must both be on the same device'
+                                   ' as metric class.')
 
-        self.iou += intersection / union if union > 0 else 1
-        self.batch_count += 1
+        for num, im in enumerate(data_info):
+            if im in self.iou:
+                self.iou[im]['predicted'] = torch.cat((predicted[num, :].unsqueeze(dim=0), self.iou[im]['predicted']))
+                self.iou[im]['label'] = torch.cat((label[num, :].unsqueeze(dim=0), self.iou[im]['label']))
+            else:
+                self.iou[im] = {}
+                self.iou[im]['predicted'] = predicted[num, :].unsqueeze(dim=0)
+                self.iou[im]['label'] = label[num, :].unsqueeze(dim=0)
 
-    def compute(self, loss=False):
+    def compute(self, loss=False) -> float:
         """
         calculates the mean IoU of all the data that has been given
         by dividing by the number of batches i.e. number of times the forward
@@ -58,14 +234,42 @@ class mIoU(nn.Module):
         Returns:
 
         """
+        """
+        if self.batch_union == 0:
+            raise ZeroDivisionError('Union is equal to zero. Division by Zero is not allowed.')
+
+        iou = self.batch_intersection / self.batch_union
+
         if loss:
-            return 1 - (self.iou / self.batch_count)
-        else:
-            return self.iou / self.batch_count
+            iou = 1 - iou
+
+        if self.automatic_reset:
+            self.reset()
+        """
+        num_imgs = len(list(self.iou.keys()))
+        tot_jacc = 0
+
+        for key in self.iou.keys():
+
+            jacc = self.jaccard(self.iou[key]['predicted'], self.iou[key]['label']).item()
+
+            if math.isnan(jacc):
+                jacc = 1.0
+
+            tot_jacc += jacc
+
+        tot_jacc = tot_jacc / num_imgs
+
+        if math.isnan(tot_jacc):
+            tot_jacc = 0.0
+
+        if self.automatic_reset:
+            self.reset()
+
+        return tot_jacc
 
     def reset(self):
-        self.iou = 0
-        self.batch_count = 0
+        self.iou = {}
 
 
 class DiceCoefficient(nn.Module):
@@ -146,6 +350,7 @@ class BinaryMetrics(nn.Module):
 
     def mIoU(self):
         return self.TP / (self.TP + self.FN + self.FP)
+
 
 """
     def dice_coefficient(self, as_loss: bool = False) -> float:

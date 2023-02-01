@@ -553,10 +553,10 @@ class RandomRotation(FunctionalTransform):
         return image, mask
 
 
-class BrightnessAdjust(FunctionalTransform):
+class RandomBrightnessAdjust(FunctionalTransform):
 
     def __init__(self, p: float = 0.5, brightness_range: Tuple[float, float] = (1, 1)):
-        super(BrightnessAdjust, self).__init__()
+        super(RandomBrightnessAdjust, self).__init__()
         if 0 >= p >= 1:
             raise ValueError(f'Probability must be between 0.0 and 1.0. Got {p}')
         if any(brightness_range) < 0:
@@ -575,10 +575,10 @@ class BrightnessAdjust(FunctionalTransform):
         return image, mask
 
 
-class ContrastAdjust(FunctionalTransform):
+class RandomContrastAdjust(FunctionalTransform):
 
     def __init__(self, p: float = 0.5, contrast_range: Tuple[float, float] = (1, 1)):
-        super(ContrastAdjust, self).__init__()
+        super(RandomContrastAdjust, self).__init__()
         if 0 >= p >= 1:
             raise ValueError(f'Probability must be between 0.0 and 1.0. Got {p}')
         if any(contrast_range) < 0:
@@ -689,25 +689,99 @@ class ObjectAugmentation(FunctionalTransform):
 
 if __name__ == '__main__':
     from imageio.v2 import imread
+    from models.unets import UNet
+    from torchmetrics.functional.classification import binary_jaccard_index
 
+    torch.manual_seed(42)
     im_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\data\\MAD6400_2015-08-12_manda_59_94_235.png'
     msk_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\label\\MAD6400_2015-08-12_manda_59_94_235.png'
+
+    resize = QuasiResize([64, 64], 2)
+    un_resize = UndoQuasiResize(resize)
+    norm = Normalize((0, 1), (0, 255), return_type=torch.float32)
+    float32 = ConvertDtype(torch.float32)
+
     im = torch.from_numpy(np.array(imread(im_path)).transpose((2, 0, 1)))
     msk = torch.from_numpy(np.array(imread(msk_path)).transpose((2, 0, 1)))
+    transform = RandomContrastAdjust(0.99, (1.1, 1.1))
 
-    bright_adjust = BrightnessAdjust(0.99, (0.9, 0.9))
-    contrast_adjust = ContrastAdjust(0.99, (1.5, 1.5))
+    im1 = norm(im)
+    msk = float32(msk)
 
+    im1 = torch.stack((resize(im1[:, :, 0:58]), resize(im1[:, :, 58:58*2]))).cuda()
+    msk1 = torch.stack((resize(msk[:, :, 0:58]), resize(msk[:, :, 58:58*2]))).cuda()
+
+    im, _ = transform(im, msk)
+    im = norm(im)
+    msk = float32(msk)
+
+    im2 = torch.stack((resize(im[:, :, 0:58]), resize(im[:, :, 58:116]))).cuda()
+    msk2 = torch.stack((resize(msk[:, :, 0:58]), resize(msk[:, :, 58:116]))).cuda()
+
+    model = UNet().cuda()
+    pre_trained = torch.load('C:\\Users\\dombe\\PycharmProjects\\Test\\weights\\UNet_Train_pretrained_freezeNone_DICE_adam.pt')
+    model.init_weights(pre_trained['model_state'])
+
+    model.eval()
+
+    with torch.no_grad():
+
+        pred = model(im1)
+
+        pred = torch.where(pred.squeeze() >= 0.5, 1, 0)
+        #pred1 = torch.where(pred1 >= 0.5, 1, 0)
+
+        iou = binary_jaccard_index(pred, msk1[:, 0, :, :]).item()
+
+        fig, ax = plt.subplots(3, 2)
+        ax[0, 0].imshow(im1.cpu()[0, 0, :, :], cmap='jet')
+        ax[0, 1].imshow(im1.cpu()[1, 0, :, :], cmap='jet')
+        ax[1, 0].imshow(msk1.cpu()[0, 0, :, :], cmap='jet', vmin=0, vmax=1)
+        ax[1, 1].imshow(msk1.cpu()[1, 0, :, :], cmap='jet', vmin=0, vmax=1)
+        ax[2, 0].imshow(pred.cpu()[0, :, :], cmap='jet', vmin=0, vmax=1)
+        ax[2, 1].imshow(pred.cpu()[1, :, :], cmap='jet', vmin=0, vmax=1)
+        fig.suptitle(f'IoU: {iou}', fontsize=16)
+        plt.show()
+
+        pred = model(im2)
+
+        pred = torch.where(pred.squeeze() >= 0.5, 1, 0)
+        #pred1 = torch.where(pred1 >= 0.5, 1, 0)
+
+        iou = binary_jaccard_index(pred, msk2[:, 0, :, :]).item()
+
+        fig, ax = plt.subplots(3, 2)
+        ax[0, 0].imshow(im2.cpu()[0, 0, :, :], cmap='jet')
+        ax[0, 1].imshow(im2.cpu()[1, 0, :, :], cmap='jet')
+        ax[1, 0].imshow(msk2.cpu()[0, 0, :, :], cmap='jet', vmin=0, vmax=1)
+        ax[1, 1].imshow(msk2.cpu()[1, 0, :, :], cmap='jet', vmin=0, vmax=1)
+        ax[2, 0].imshow(pred.cpu()[0, :, :], cmap='jet', vmin=0, vmax=1)
+        ax[2, 1].imshow(pred.cpu()[1, :, :], cmap='jet', vmin=0, vmax=1)
+        fig.suptitle(f'IoU: {iou}', fontsize=16)
+        plt.show()
+
+
+
+
+    """
+    #bright_adjust = RandomBrightnessAdjust(0.99, (1.2, 1.2))
+    contrast_adjust = RandomContrastAdjust(0.99, (0.7, 0.7))
+    flip = RandomHorizontalFlip(0.99)
+
+    norm = Normalize((0, 1), (0, 255))
     fig, ax = plt.subplots(2, 1)
 
     min_, max_ = torch.min(im), torch.max(im)
 
     ax[0].imshow(im[0, :, :], cmap='jet', vmin=min_, vmax=max_)
-    im, msk = bright_adjust(im, msk)
+    #im, msk = bright_adjust(im, msk)
     im, msk = contrast_adjust(im, msk)
-
-    ax[1].imshow(im[0, :, :], cmap='jet', vmin=min_, vmax=max_)
+    print(torch.max(im))
+    im = norm(im)
+    #im, msk = flip(im, msk)
+    ax[1].imshow(im[0, :, :], cmap='jet', vmin=0, vmax=1)
     plt.show()
+    """
     """
     transforms = [RandomVerticalFlip(0.9), RandomHorizontalFlip(0.9)]
 

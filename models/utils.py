@@ -31,7 +31,7 @@ def change_weights_inputsize(model: nn.Module, return_channel: int = 0) -> Dict:
     if isinstance(block_layers, nn.Sequential):
         first_conv2layer_name = list(block_layers.state_dict())[0]
         for layer in block_layers:
-            if isinstance(layer, nn.Conv2d):
+            if isinstance(layer, (nn.Conv2d, nn.ConvTranspose2d)):
                 key = first_block_name + '.' + first_conv2layer_name
                 state_dict_copy[key].data = model.state_dict()[key].data[:, return_channel:return_channel + 1, :, :]
                 print(state_dict_copy[key].data[:, :, :, :].shape)
@@ -43,12 +43,13 @@ def change_weights_inputsize(model: nn.Module, return_channel: int = 0) -> Dict:
 def load_model(config_path):
     config = utils.load_yaml_as_dotmap(config_path)
 
-    if config.model.model_type == 'unet':
+    if config.model.model_type == 'Unet':
 
         model = UNet(in_channels=config.model_init.in_channels,
                      out_channels=config.model_init.out_channels,
                      initial_features=config.model_init.init_features)
-    elif config.model.model_type == 'PSPunet':
+
+    elif config.model.model_type == 'PSPUnet':
 
         model = PSPUNet(in_channels=config.model_init.in_channels,
                         out_channels=config.model_init.out_channels,
@@ -69,7 +70,7 @@ def load_model(config_path):
                                  ' This will change the state dict names such that one can use the weights.')
 
             model.init_weigths_by_layer(old_model['model_state'],
-                                        [i for i in range(len(list(old_model['model_state'])))])
+                                        [i for i in range(len(list(old_model['model_state'])) - 2)])
 
         elif len(list(old_model['model_state'])) == len(list(model.state_dict())):
 
@@ -78,9 +79,8 @@ def load_model(config_path):
         else:
             raise ValueError('')
     else:
-        model.init_random_weights(init_layer=[nn.Conv2d, nn.ConvTranspose2d])
+        model.init_random_weights(model, init_layer=[nn.Conv2d, nn.ConvTranspose2d])
 
-    print(config.model_init.freeze_layers)
     if config.model_init.freeze_layers:
         model.freeze_blocks(config.model_init.freeze_layers, freeze_layer_types=[nn.Conv2d])
 
@@ -108,12 +108,10 @@ def load_optimizer(config: dotmap.DotMap, model: nn.Module, grad_true_only: bool
                             weight_decay=config.optimizer.weight_decay)
 
     else:
-        ValueError(f'Optimizer {config.optimizer.optim_type} not implemented or does not exist')
-        optimizer = None
+        raise ValueError(f'Optimizer {config.optimizer.optim_type} not implemented or does not exist')
 
     lr_scheduler = opt.lr_scheduler.StepLR(optimizer,
                                            step_size=config.learning_scheduler.step_size,
                                            gamma=config.learning_scheduler.gamma,
                                            last_epoch=config.learning_scheduler.last_epoch)
-
     return optimizer, lr_scheduler

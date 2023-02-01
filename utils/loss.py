@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
-
+from torchmetrics import Dice
 
 def dice_loss(true, logits, eps=1e-7):
     """Computes the Sørensen–Dice loss.
@@ -42,10 +42,13 @@ def dice_loss(true, logits, eps=1e-7):
 class BinaryDiceLoss(nn.Module):
     
     def __init__(self,
+                 threshold: float = 0.5,
                  eps: float = 1e-7,
                  reduction: str = 'mean'):
         super(BinaryDiceLoss, self).__init__()
         self.eps = eps
+        self.reduction = reduction
+        self.threshold = threshold
 
     def forward(self, predict: Tensor, target: Tensor):
 
@@ -56,39 +59,59 @@ class BinaryDiceLoss(nn.Module):
             raise ValueError(f'Predicted and target Tensor must have shape [N, 1, H, W]. Got predicted: {predict.shape}'
                              f' and target: {target.shape}')
 
-        pred = predict.view(predict.shape[0], -1)
-        targ = target.view(target.shape[0], -1)
+        #pred = torch.where(predict >= 0.5, 1, 0)
+        #pred = predict.view(predict.shape[0], -1)
+        #targ = target.view(target.shape[0], -1)
 
-        intersect = torch.sum(torch.mul(pred, targ), dim=1) + self.eps
+        #intersect = torch.sum(torch.mul(pred, targ), dim=1) + self.eps
 
-        numerator = (2. * intersect)
-        denumerator = torch.sum(pred, dim=1) + torch.sum(targ, dim=1)
+        #numerator = (2. * intersect)
+        #denominator = torch.sum(pred, dim=1) + torch.sum(targ, dim=1) + intersect
+        #self.dice.update(predict, targ)
+        #return (1 - (numerator / (denominator + self.eps))).mean()
 
-        return (1 - (numerator / (denumerator + self.eps))).mean()
+        predict = predict.view(-1)
+        target = target.view(-1)
+
+        intersection = (predict * target).sum()
+        dice = (2.0 * intersection + self.eps) / (target.sum() + predict.sum() + self.eps)
+
+        return 1 - dice
 
 
-class WeightedBCE(nn.Module):
-    
-    def __init__(self):
-        super(WeightedBCE, self).__init__()
-
-
-# From https://github.com/clcarwin/focal_loss_pytorch/blob/master/focalloss.py
-
+# https://www.kaggle.com/code/bigironsphere/loss-function-library-keras-pytorch/notebook
 class FocalLoss(nn.Module):
 
-    def __init__(self, gamma: float = 0, alpha: float = None, eps: float = 1e-8, output: str = 'mean'):
+    def __init__(self, gamma: float = 2, alpha: float = 0.8, output: str = 'mean'):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.alpha = alpha
-        self.eps = eps
         self.output = output
 
-    def forward(self, predicted, label):
+    def forward(self, predicted: Tensor, label: Tensor) -> Tensor:
 
-        bce = F.binary_cross_entropy(predicted, label)
+        predicted = predicted.view(-1)
+        label = label.view(-1)
 
-        return None
+        bce = F.binary_cross_entropy(predicted, label, reduction=self.output)
+
+        bce_exp = torch.exp(-bce)
+        focal_loss = self.alpha * (1 - bce_exp)**self.gamma * bce
+
+        return focal_loss
+
+
+class LogCoshDiceLoss(nn.Module):
+
+    def __init__(self, threshold: float = 0.5, eps: float = 1e-7):
+        super(LogCoshDiceLoss, self).__init__()
+        self.dice = BinaryDiceLoss(threshold=threshold, eps=eps)
+
+    def forward(self, predicted: Tensor, label: Tensor) -> Tensor:
+
+        loss = torch.log(torch.cosh(self.dice(predicted, label)))
+
+        return loss
 
 
 class WeightedSoftDiceLoss(nn.Module):
@@ -144,7 +167,7 @@ class DiceCoefficient(nn.Module):
 
     def forward(self, pred, label):
         if pred.shape != label.shape:
-            raise ValueError(f'')
+            raise ValueError(f'predicted and label mus have same shape.')
 
         pred = pred.view(pred.shape[0], -1)
         label = label.view(label.shape[0], -1)

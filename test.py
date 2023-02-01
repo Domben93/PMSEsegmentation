@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn
 import argparse
-from utils.dataset import PMSE_Dataset
+from utils.dataset import PMSE_Dataset, get_dataloader
 from utils import transforms as t
 from torch.utils.data import DataLoader
 from utils.utils import *
@@ -76,102 +76,48 @@ def display(image, label, pred, info, v_min, v_max):
 
     return fig_list
 
+def main(args):
 
-def argparser():
-    parser = argparse.ArgumentParser(description='Testing model for PMSE signal segmentation')
-    parser.add_argument('--weights', type=str, )
-    return parser.parse_args()
-
-
-def main():
-    args = argparser()
-
-    print('Testing')
-
-    pmse_train_data = PMSE_Dataset(Settings.CompleteSet.DATA,
-                                   Settings.CompleteSet.MASKS,
-                                   disable_warnings=True)
-
-    data_loader = DataLoader(pmse_train_data, batch_size=1)
-
-    mean, std = dataset_mean_and_std(data_loader)
-
-    min_ = - std * 3
-    max_ = std * 3
-
-    v_min, v_max = 0, 1
+    config = load_yaml_as_dotmap(args.config_path)
+    print('Running test')
 
     pair_compose = t.PairCompose([
-        [t.Standardize(mean=mean, std=std), t.MaskClassReduction([0, 1, 2, 3], [0, 1], 0)],
-        [t.Normalize((0, 255), (min_, max_)), None],
-        [t.ToTensor(), t.ToTensor(zero_one_range=False)],
-        [t.QuasiResize([64, 64], 2), t.QuasiResize([64, 64], 2)],
-        [t.ToGrayscale(output_channels=3), None],
-        [t.ConvertDtype(torch.float32), t.ConvertDtype(torch.float32)]
+        [t.ConvertDtype(torch.float32), t.ConvertDtype(torch.float32)],
+        [t.Normalize((0, 1), (0, 255), return_type=torch.float32), None],
+        [t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale),
+         t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale)],
     ])
 
-    pmse_test_data = PMSE_Dataset(Settings.IntermediateSamples.DATA,
-                                  Settings.IntermediateSamples.MASKS,
-                                  transform=pair_compose,
-                                  square_split=True,
-                                  percent_overlap=.0)
+    test_loader = get_dataloader(args.config_path, pair_compose, mode='test')
 
-    pmse_test_class1 = PMSE_Dataset(Settings.BigSamples.DATA,
-                                    Settings.BigSamples.MASKS,
-                                    transform=pair_compose,
-                                    square_split=True,
-                                    percent_overlap=.0)
-
-    pmse_test_class2 = PMSE_Dataset(Settings.IntermediateSamples.DATA,
-                                    Settings.IntermediateSamples.MASKS,
-                                    transform=pair_compose,
-                                    square_split=True,
-                                    percent_overlap=.0)
-
-    pmse_test_class3 = PMSE_Dataset(Settings.SmallSamples.DATA,
-                                    Settings.SmallSamples.MASKS,
-                                    transform=pair_compose,
-                                    square_split=True,
-                                    percent_overlap=.0)
-
-    class_list = [pmse_test_class1, pmse_test_class2, pmse_test_class3]
-
-    UNet = unets.UNet(3, 1, 32)
+    model = unets.UNet(3, 1, 32)
     device = torch.device("cuda")
-    model = torch.load('weights\\UNet_64x64_lr0.001_freezed01235678_diceloss.pt')
-    UNet.init_weights(model['model_state'])
+    pre_trained = torch.load('../Test/weights/UNet_Train_pretrained_freezeNone_DICE_adam.pt')
+    model.init_weights(pre_trained['model_state'])
 
-    UNet.to(device)
-    UNet.eval()
+    model.to(device)
+    model.eval()
 
     images, labels, pred, info_list = [], [], [], []
-    miou = met.mIoU(threshold=0.5)
-    bin_metrics = met.BinaryMetrics()
-    # softDice = met.DiceCoefficient()
-    dice = 0
+    #miou = met.mIoU(threshold=0.5, reset_after_compute=True)
+    metrics = met.SegMets()
 
     undo_scaling = t.UndoQuasiResize(t.QuasiResize([64, 64], 2))
 
-    for i in range(len(pmse_test_data)):
-        image, mask, info = pmse_test_data[i]
+    for data in test_loader:
+        image, mask, info = data
 
-        image = image.to(device)[None, :]
+        image = image.to(device)
         mask = mask.to(device)
 
         with torch.no_grad():
-            res = UNet(image)
+            res = model(image)
 
             res = res.view(1, 64, 64)
             image = image.view(3, 64, 64)
             mask = mask.view(1, 64, 64)
 
-            miou(res, mask)
-            # diceCoef = softDice(res, mask)
-
-            bin_metrics(res.detach().cpu(), mask.detach().cpu())
-            # dice += diceCoef.item()
-
-            # o_image, o_mask, _ = pmse_test_data.get_original_image_and_mask(i)
+            metrics(res.detach().cpu(), mask.detach().cpu(), info['image_name'])
 
             (lr, rr), (lc, rc) = info['split_info']
             image_original_size = undo_scaling(image.detach().cpu(), [rr - lr, rc - lc])
@@ -187,15 +133,21 @@ def main():
 
     # print(f'AUC: {auc.auc()}')
     # print(f'Dice: {dice / len(pmse_test_data)}')
-    print(f'mIoU: {miou.compute()}')
-    bin_metrics.confusion_matrix(threshold=0.3)
-    print(bin_metrics.FNR(), bin_metrics.FPR())
-    print(f'Accuracy: {bin_metrics.accuracy()}')
-    print(f'mIoU: {bin_metrics.mIoU()}')
-    figs = display(images, labels, pred, info_list, v_min, v_max)
+    print(f'mIoU: {metrics.mIoU()}')
+    print(f'AUC: {metrics.auc()}')
+    print(f'Accuracy: {metrics.accuracy()}')
+    print(f'Precision: {metrics.precision()}')
+    print(f'Dice Coef: {metrics.dice()}')
+
+    figs = display(images, labels, pred, info_list, 0, 1)
 
     plt.show()
 
 
 if __name__ == '__main__':
-    main()
+
+    parser = argparse.ArgumentParser(description='Testing model for PMSE signal segmentation')
+    parser.add_argument('--config-path', type=str, default='models\\options\\unet_config.ymal',
+                        help='Path to confg.ymal file (Default unet_config.ymal)')
+
+    main(parser.parse_args())

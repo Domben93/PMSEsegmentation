@@ -31,7 +31,7 @@ class CEV:
         avg_fnr = avg_fpr_fnr[1]
 
         for (mean_pos, mean_neg) in norm_change.T:
-            dist += (avg_fpr - mean_pos)**2 + (avg_fnr - mean_neg)**2
+            dist += np.sqrt((avg_fpr - mean_pos)**2 + (avg_fnr - mean_neg)**2)
 
         dist = dist**2 / norm_change.shape[1]
 
@@ -54,12 +54,12 @@ class SDE:
         delta_FNR_i = CEV.normalized_change(comp_FNR, orig_FNR)
 
         sde = self.mean_absolute_change(delta_FPR_i, delta_FNR_i)
-        print(sde)
+
         return sde
 
     @staticmethod
-    def mean_absolute_change(delta_fpr_i, delta_fnr_i):
-        return np.sum(np.abs(delta_fnr_i - delta_fpr_i))
+    def mean_absolute_change(delta_fpr_i, delta_fnr_i) -> float:
+        return float(np.sum(np.abs(delta_fnr_i - delta_fpr_i)))
 
 
 if __name__ == '__main__':

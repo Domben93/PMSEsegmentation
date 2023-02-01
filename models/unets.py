@@ -142,19 +142,23 @@ class ResUNet(BaseModel):
         super(ResUNet, self).__init__(in_channels=in_channels,
                                       out_channels=out_channels)
 
-        self.
-
-
         self.encoder1 = nn.Sequential()
 
     def forward(self, x: Tensor) -> Tensor:
         pass
 
+
 class UnetPlussPluss(BaseModel):
 
-    def __init__(self):
-        super(UnetPlussPluss, self).__init__()
+    def __init__(self, in_channels: int = 3,
+                 out_channels: int = 1,
+                 initial_features: int = 32):
+        super(UnetPlussPluss, self).__init__(in_channels=in_channels,
+                                             out_channels=out_channels)
+        pass
 
+    def forward(self, x: Tensor) -> Tensor:
+        pass
 
 
 class ResUNetA(nn.Module):
@@ -163,6 +167,7 @@ class ResUNetA(nn.Module):
 
 if __name__ == '__main__':
     from models.utils import change_weights_inputsize
+
     torch.manual_seed(666)
 
     model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
@@ -173,7 +178,7 @@ if __name__ == '__main__':
 
     # params = [p for p in model.parameters() if p.requires_grad]
 
-    #torchsummary.summary(model.cuda(), (3, 64, 64))
+    # torchsummary.summary(model.cuda(), (3, 64, 64))
 
     print(model.encoder1.enc1conv1.weight.shape)
 
