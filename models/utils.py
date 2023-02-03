@@ -88,6 +88,7 @@ def load_model(config_path):
 
 
 def load_optimizer(config: dotmap.DotMap, model: nn.Module, grad_true_only: bool = True) -> tuple[Any, Any]:
+
     if grad_true_only:
         params = [p for p in model.parameters() if p.requires_grad]
     else:

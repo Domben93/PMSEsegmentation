@@ -34,10 +34,10 @@ dataloader:
 optimizer:
   loss_type: BinaryDiceLoss
   optim_type: adam #optimizer type
-  learning_rate: 0.01 # Initial learning rate
+  learning_rate: 0.001 # Initial learning rate
   momentum: 0.9  # Uncomment if wanted to be used. Not available for Adam and some other optimizer algorithms
   weight_decay: 0.0
-  betas: [0.5, 0.9]
+  betas: [0.9, 0.999]
 
 learning_scheduler:
   step_size: 10 # lr step every n epochs
@@ -45,7 +45,7 @@ learning_scheduler:
   last_epoch: -1 # -1 is for not specified
 
 training:
-  number_of_runs: 5
-  epochs: 50 # number of epochs
+  number_of_runs: 3
+  epochs: 3 # number of epochs
   eval_interval: 1 # Set to None or 0 if no evaluation is wanted
   save_best: True

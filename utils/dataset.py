@@ -6,7 +6,7 @@ import yaml
 from torch.utils.data import Dataset, DataLoader
 from .splitdata2 import SplitSegData
 from .transforms import *
-from typing import Any, Callable, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Optional, Tuple, TypeVar, Union, Dict
 from imageio.v2 import imread
 from torch import Tensor
 
@@ -41,7 +41,7 @@ class PMSE_Dataset(Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, item) -> Tuple[Tensor, Tensor, str]:
+    def __getitem__(self, item) -> Tuple[Tensor, Tensor, Dict]:
         image, mask, name = self.dataset[item]
 
         image = torch.from_numpy(image.transpose((2, 0, 1)))

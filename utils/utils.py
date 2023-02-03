@@ -50,6 +50,14 @@ def default_loader(path: str, return_type: Union[Type[Image.Image], Type[np.ndar
     else:
         data = pil_loader(path, **kwargs)
 
+    if len(data.shape) == 3:
+        pass
+    elif len(data.shape) == 2:
+        data = np.array([data]).transpose((1, 2, 0))
+    else:
+        raise ValueError(f'Data has to be either of size [N, H, W] or [H, W]. [H, W] shape is automatically'
+                         f' reshaped to [1, H, W]. Got {len(data.shape)}.')
+
     if isinstance(data, return_type):
         return data
     else:
@@ -57,6 +65,8 @@ def default_loader(path: str, return_type: Union[Type[Image.Image], Type[np.ndar
             return np.array(data)
         else:
             return Image.fromarray(data)
+
+
 
 
 def mat_loader(path: str, **kwargs) -> np.ndarray:

@@ -53,7 +53,7 @@ class FunctionalTransform(object):
         raise NotImplementedError
 
 
-TransformTypes = TypeVar("TransformTypes", Transform, FunctionalTransform)
+TransformTypes = TypeVar("TransformTypes", Transform, FunctionalTransform, type(None))
 
 
 class Compose:

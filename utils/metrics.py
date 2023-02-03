@@ -1,15 +1,10 @@
 import math
-from typing import List, NoReturn
-
+from typing import List, NoReturn, Any, Tuple, Callable
 import torch
 import torch.nn as nn
-import torchmetrics
 from torch import Tensor
-import numpy as np
-from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 from torchmetrics.classification import BinaryJaccardIndex
 from torchmetrics.functional.classification import *
-from math import isnan
 
 
 class SegMets(nn.Module):
@@ -27,7 +22,7 @@ class SegMets(nn.Module):
 
         self._store_res = {}
 
-    def forward(self, predicted: torch.Tensor, label: torch.Tensor, data_info: list):
+    def forward(self, predicted: torch.Tensor, label: torch.Tensor, data_info: List):
         """
 
         Args:
@@ -36,11 +31,16 @@ class SegMets(nn.Module):
             data_info: Any pickle
 
         """
+
         if predicted.shape != label.shape:
             raise ValueError(f'shape of predicted tensor and label must be of same shape. Got {predicted.shape} and '
                              f'{label.shape} respectively')
 
+        if isinstance(data_info, str):
+            data_info = [data_info]
+
         predicted = predicted.view(predicted.shape[0], -1)
+
         label = label.view(label.shape[0], -1)
 
         for num, im in enumerate(data_info):
@@ -53,120 +53,170 @@ class SegMets(nn.Module):
                 self._store_res[im]['predicted'] = predicted[num, :].unsqueeze(dim=0)
                 self._store_res[im]['label'] = label[num, :].unsqueeze(dim=0)
 
-    def mIoU(self, threshold: float = 0.5, ignore_index: int = None) -> float:
+    def mIoU(self, threshold: float = 0.5, ignore_index: int = None, sample_classes: List[List[str]] = None) -> Tensor:
         """
         calculates the mean IoU of all the data that has been given
         by dividing by the number of batches i.e. number of times the forward
         method has been called
         Args:
+            sample_classes:
             threshold:
             ignore_index:
         Returns:
         """
+        return self.__compute(binary_jaccard_index, sample_classes, ignore_index=ignore_index, threshold=threshold)
 
-        self.__check_storage()
+    def auc(self, threshold: float = None, ignore_index: int = None, sample_classes: List[List[str]] = None) -> Tensor:
+        """
 
-        num_imgs = len(list(self._store_res.keys()))
-        tot_jacc = 0
+        Args:
+            threshold:
+            ignore_index:
+            sample_classes:
 
-        for key in self._store_res.keys():
+        Returns:
 
-            jacc = binary_jaccard_index(self._store_res[key]['predicted'], self._store_res[key]['label'],
+        """
+        return self.__compute(binary_auroc, sample_classes, ignore_index=ignore_index, thresholds=threshold)
+
+    def accuracy(self, threshold: float = 0.5, ignore_index: int = None,
+                 sample_classes: List[List[str]] = None) -> Tensor:
+        """
+
+        Args:
+            threshold:
+            ignore_index:
+            sample_classes:
+
+        Returns:
+
+        """
+        return self.__compute(binary_accuracy, sample_classes, threshold=threshold, ignore_index=ignore_index)
+
+    def precision(self, threshold: float = 0.5, ignore_index: int = None,
+                  sample_classes: List[List[str]] = None) -> Tensor:
+        """
+
+        Args:
+            threshold:
+            ignore_index:
+            sample_classes:
+
+        Returns:
+
+        """
+        return self.__compute(binary_precision, sample_classes, threshold=threshold, ignore_index=ignore_index)
+
+    def dice(self, threshold: float = 0.5, ignore_index: int = None, sample_classes: List[List[str]] = None) -> Tensor:
+        """
+
+        Args:
+            threshold:
+            ignore_index:
+            sample_classes:
+
+        Returns:
+
+        """
+        return self.__compute(binary_f1_score, sample_classes, threshold=threshold, ignore_index=ignore_index)
+
+    def confusion_matrix(self, threshold: float = 0.5, ignore_index: int = None,
+                         sample_classes: List[List[str]] = None) -> Tensor:
+        """
+
+        Args:
+            threshold:
+            ignore_index:
+            sample_classes:
+
+        Returns:
+
+        """
+        return self.__compute(binary_confusion_matrix, sample_classes, threshold=threshold, ignore_index=ignore_index)
+
+    def FPR_FNR(self, threshold: float = 0.5, ignore_index: int = None, sample_classes: List[List[str]] = None)\
+            -> Tensor:
+        """
+
+        Args:
+            threshold:
+            ignore_index:
+            sample_classes:
+
+        Returns:
+
+        """
+        confusion_mats = self.__compute(binary_confusion_matrix, sample_classes,
                                         threshold=threshold,
-                                        ignore_index=ignore_index).item()
+                                        ignore_index=ignore_index)
 
-            if math.isnan(jacc):
-                jacc = 1.0
+        fnr_fpr = torch.zeros(2, (len(sample_classes)))
 
-            tot_jacc += jacc
+        for idx, conf_mat in enumerate(confusion_mats):
 
-        tot_jacc = tot_jacc / num_imgs
+            fnr_fpr[0, idx] = conf_mat[0, 1] / (conf_mat[0, 1] + conf_mat[0, 0])
+            fnr_fpr[1, idx] = conf_mat[1, 0] / (conf_mat[1, 0] + conf_mat[1, 1])
 
-        if math.isnan(tot_jacc):
-            tot_jacc = 0.0
+        return fnr_fpr
 
-        return tot_jacc
+    def __compute(self, function: Callable, sample_classes: List[List[str]] = None, **kwargs) -> Any:
 
-    def auc(self) -> float:
-        """
+        self.__check_data_validity()
 
-        Returns:
+        num_different_samples = len(list(self._store_res.keys()))
 
-        """
-        num_imgs = len(list(self._store_res.keys()))
-        tot_auc = 0
-
-        for key in self._store_res.keys():
-            auc = binary_auroc(self._store_res[key]['predicted'], self._store_res[key]['label'])
-
-            if math.isnan(auc):
-                raise ValueError('Nan value detected')
-
-            tot_auc += auc
-
-        return tot_auc / num_imgs
-
-    def accuracy(self, threshold: float = 0.5, ignore_index: int = None):
-        """
-
-        Returns:
-
-        """
-        num_imgs = len(list(self._store_res.keys()))
-        tot_acc = 0
+        if sample_classes:
+            total = {}
+            for i in range(len(sample_classes)):
+                total[i] = []
+        else:
+            total = 0
 
         for key in self._store_res.keys():
-            acc = binary_accuracy(self._store_res[key]['predicted'], self._store_res[key]['label'],
-                                  threshold=threshold,
-                                  ignore_index=ignore_index)
 
-            if math.isnan(acc):
-                raise ValueError('Nan value detected')
+            partial_met_val = function(self._store_res[key]['predicted'], self._store_res[key]['label'],
+                                       **kwargs)
 
-            tot_acc += acc
+            if torch.all(torch.isnan(partial_met_val)):
+                partial_met_val = 1
 
-        return tot_acc / num_imgs
+            if sample_classes is not None:
 
-    def precision(self, threshold: float = 0.5, ignore_index: int = None):
+                index = self.__find_in_nested_list(sample_classes, key)
+                sample_class = index[0]
 
-        num_imgs = len(list(self._store_res.keys()))
-        tot_prec = 0
+                total[sample_class].append(partial_met_val)
 
-        for key in self._store_res.keys():
-            prec = binary_precision(self._store_res[key]['predicted'], self._store_res[key]['label'],
-                                    threshold=threshold,
-                                    ignore_index=ignore_index)
+            else:
+                total += partial_met_val
 
-            if math.isnan(prec):
-                raise ValueError('Nan value detected')
+        if isinstance(total, dict):
+            res = []
 
-            tot_prec += prec
+            for key in total.keys():
 
-        return tot_prec / num_imgs
+                if function is binary_confusion_matrix:
 
-    def dice(self, threshold: float = 0.5, ignore_index: int = None):
+                    res.append(sum(total[key]))
+                else:
+                    res.append(float(sum(total[key]) / len(total[key])))
+        else:
+            res = total / num_different_samples
 
-        num_imgs = len(list(self._store_res.keys()))
-        tot_dice = 0
+        return res
 
-        for key in self._store_res.keys():
-            dice = binary_f1_score(self._store_res[key]['predicted'], self._store_res[key]['label'],
-                                   threshold=threshold,
-                                   ignore_index=ignore_index)
-
-            if math.isnan(dice):
-                raise ValueError('Nan value detected')
-
-            tot_dice += dice
-
-        return tot_dice / num_imgs
-
-    def reset(self):
-        self._store_res = {}
-
-    def __check_storage(self):
+    def __check_data_validity(self):
         if not bool(self._store_res):
-            raise RuntimeError(f'No values available for computation.')
+            raise RuntimeError('Tried to compute metric with no available data. '
+                               'Use class call with the prediction, label and info to store data.')
+
+    @staticmethod
+    def __find_in_nested_list(nested_list: List, string: str) -> Tuple:
+
+        for sub_list in nested_list:
+            if string in sub_list:
+                return nested_list.index(sub_list), sub_list.index(string)
+        raise ValueError("'{char}' is not in list".format(char=string))
 
 
 class mIoU(nn.Module):
@@ -289,73 +339,3 @@ class DiceCoefficient(nn.Module):
         union = (pred.sum(dim=1) + label.sum(dim=1))
 
         return (2 * intersection + self.smooth) / (union + self.smooth)
-
-
-class BinaryMetrics(nn.Module):
-
-    def __init__(self):
-        super(BinaryMetrics, self).__init__()
-
-        self.batch_count = 0
-        self.batch_pred = []
-        self.batch_true = []
-        self.TP = 0
-        self.FP = 0
-        self.TN = 0
-        self.FN = 0
-
-    def forward(self, pred: Tensor, true: Tensor):
-
-        if pred.shape != true.shape:
-            raise RuntimeError(f"predicted Tensor Shape {pred.shape} != label Tensor Shape {true.shape}")
-
-        for i in range(pred.shape[0]):
-            self.batch_pred.append(pred[i].view(-1).numpy())
-            self.batch_true.append(true[i].view(-1).numpy())
-
-        self.batch_count += pred.shape[0]
-
-    def reset(self):
-        self.batch_count = 0
-        self.batch_pred = []
-        self.batch_true = []
-        self.TP = 0
-        self.FP = 0
-        self.TN = 0
-        self.FN = 0
-
-    def confusion_matrix(self, threshold=0.5):
-        cm = 0
-        for prediction, true in zip(self.batch_pred, self.batch_true):
-            cm = cm + confusion_matrix(true, np.where(prediction >= threshold, 1, 0))
-
-        self.TN = cm[0, 0]
-        self.FN = cm[1, 0]
-        self.FP = cm[0, 1]
-        self.TP = cm[1, 1]
-
-        return cm
-
-    def FNR(self) -> float:
-        return self.FN / (self.FN + self.TP)
-
-    def FPR(self) -> float:
-        return self.FP / (self.FP + self.TN)
-
-    def accuracy(self) -> float:
-        """
-        Returns:
-        """
-        return (self.TP + self.TN) / (self.TP + self.TN + self.FN + self.FP)
-
-    def mIoU(self):
-        return self.TP / (self.TP + self.FN + self.FP)
-
-
-"""
-    def dice_coefficient(self, as_loss: bool = False) -> float:
-
-        dsc = 2 *
-        pass
-        
-"""

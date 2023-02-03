@@ -61,7 +61,6 @@ def main(args):
 
     best_model_state = {}
     best_optim_state = {}
-    best_met = 0
 
     print(f'Training on device: {device}')
 
@@ -72,19 +71,28 @@ def main(args):
             'loss': [],
             'event': []
             }
+
+    writer_name = f'{str(config.model.model_type)}_' \
+                  f'pretrain-{str(config.model_init.pre_trained_weights)}_' \
+                  f'freezed-{str(config.model_init.freeze_layers)}_' \
+                  f'loss-{str(config.optimizer.loss_type)}_' \
+                  f'optim-{str(config.optimizer.optim_type)}_' \
+                  f'lr-{str(config.optimizer.learning_rate)}'
+
+    if not os.path.exists(os.path.join(config.model.save_path, writer_name)):
+        os.mkdir(os.path.join(config.model.save_path, writer_name))
+
     if config.training.number_of_runs < 1:
         raise ValueError(f'Number of runs must be bigger than 1. Got {config.training.number_of_runs}.')
     for i in range(config.training.number_of_runs):
-
+        best_met = 0
         model = load_model(args.config_path)
         model.to(device)
         optimizer, lr_scheduler = load_optimizer(config, model, grad_true_only=True)
 
-        #loss_func = getattr(importlib.import_module('utils.loss'), config.optimizer.loss_type)()
+        loss_func = getattr(importlib.import_module('utils.loss'), config.optimizer.loss_type)()
         #loss_func = utils.loss.BinaryDiceLoss()
-        loss_func = torch.nn.BCELoss()
-
-        writer_name = f'{type(model).__name__}_randominit_adam_1e-2_Dice_b8'
+        #loss_func = torch.nn.BCELoss()
 
         print(f'Starting Training of {type(model).__name__} with \n'
               f'--> Optimizer: {type(optimizer).__name__}\n'
@@ -216,8 +224,8 @@ def main(args):
                        optimizer=loss_func,
                        epoch=epoch,
                        train_samples=-1,
-                       file_name=os.path.join(writer_name + '.pt'),
-                       save_path=config.model.save_path,
+                       file_name=os.path.join('run_' + str(i) + '.pt'),
+                       save_path=os.path.join(config.model.save_path, writer_name),
                        loss_history=hist_dict,
                        model_state_dict=best_model_state,
                        optimizer_state_dict=best_optim_state)

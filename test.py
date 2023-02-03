@@ -6,6 +6,7 @@ from utils.dataset import PMSE_Dataset, get_dataloader
 from utils import transforms as t
 from torch.utils.data import DataLoader
 from utils.utils import *
+from utils.model_comparison import sde, cev
 from matplotlib import pyplot as plt
 from models import unets
 from config.settings import NetworkSettings as Settings
@@ -76,8 +77,8 @@ def display(image, label, pred, info, v_min, v_max):
 
     return fig_list
 
-def main(args):
 
+def main(args):
     config = load_yaml_as_dotmap(args.config_path)
     print('Running test')
 
@@ -92,15 +93,30 @@ def main(args):
 
     model = unets.UNet(3, 1, 32)
     device = torch.device("cuda")
-    pre_trained = torch.load('../Test/weights/UNet_Train_pretrained_freezeNone_DICE_adam.pt')
+    pre_trained = torch.load('../Test/weights/UNet_Train_randominit_unet_BCE_sdg.pt')
     model.init_weights(pre_trained['model_state'])
 
     model.to(device)
     model.eval()
 
     images, labels, pred, info_list = [], [], [], []
-    #miou = met.mIoU(threshold=0.5, reset_after_compute=True)
+
+    sample_classes = [['MAD6400_2008-07-02_arcd_60@vhf_400749', 'MAD6400_2009-06-10_arcd_60@vhf_422844',
+                       'MAD6400_2009-07-16_manda_60@vhf_655441', 'MAD6400_2011-06-01_manda_59',
+                       'MAD6400_2015-08-10_manda_59',
+                       'MAD6400_2015-08-13_manda_59', 'MAD6400_2015-08-20_manda_59'],
+                      ['MAD6400_2008-06-30_manda_60@vhf_060693', 'MAD6400_2009-07-14_manda_60@vhf_684778',
+                       'MAD6400_2009-07-17_manda_60@vhf_633279', 'MAD6400_2009-07-30_manda_60@vhf_779294',
+                       'MAD6400_2010-07-08_manda_59',
+                       'MAD6400_2010-07-09_manda_60@vhf_470083', 'MAD6400_2011-06-08_manda_59',
+                       'MAD6400_2011-06-09_manda_59',
+                       'MAD6400_2014-07-01_manda_48@vhf_178333', 'MAD6400_2015-08-12_manda_59'],
+                      ['MAD6400_2010-07-07_manda_60@vhf_576698']]
+
+    image_names = [item for sublist in sample_classes for item in sublist]
+
     metrics = met.SegMets()
+    baseline_metric = met.SegMets()
 
     undo_scaling = t.UndoQuasiResize(t.QuasiResize([64, 64], 2))
 
@@ -117,12 +133,18 @@ def main(args):
             image = image.view(3, 64, 64)
             mask = mask.view(1, 64, 64)
 
-            metrics(res.detach().cpu(), mask.detach().cpu(), info['image_name'])
-
             (lr, rr), (lc, rc) = info['split_info']
             image_original_size = undo_scaling(image.detach().cpu(), [rr - lr, rc - lc])
             mask_original_size = undo_scaling(mask.detach().cpu(), [rr - lr, rc - lc])
             result_original_size = undo_scaling(res.detach().cpu(), [rr - lr, rc - lc])
+
+            for i, name in enumerate(info['image_name']):
+
+                info['image_name'][i] = info['image_name'][i].rpartition('_')[0].rpartition('_')[0]
+
+            metrics(result_original_size, mask_original_size, info['image_name'])
+
+            baseline_metric(torch.randint(0, 2, result_original_size.shape), mask_original_size, info['image_name'])
 
             images.append(image_original_size[0, :, :])
             labels.append(mask_original_size[0, :, :])
@@ -131,21 +153,27 @@ def main(args):
             pred.append(res)
             info_list.append(info)
 
-    # print(f'AUC: {auc.auc()}')
-    # print(f'Dice: {dice / len(pmse_test_data)}')
     print(f'mIoU: {metrics.mIoU()}')
-    print(f'AUC: {metrics.auc()}')
-    print(f'Accuracy: {metrics.accuracy()}')
-    print(f'Precision: {metrics.precision()}')
-    print(f'Dice Coef: {metrics.dice()}')
+    #print(f'AUC: {metrics.auc()}')
+    #print(f'Accuracy: {metrics.accuracy()}')
+    #print(f'Precision: {metrics.precision()}')
+    #print(f'Dice Coef: {metrics.dice()}')
 
-    figs = display(images, labels, pred, info_list, 0, 1)
+    baseline_fnr_fpr = baseline_metric.FPR_FNR(sample_classes=sample_classes)
+    alternative_fnr_fpr = metrics.FPR_FNR(sample_classes=sample_classes)
 
-    plt.show()
+    print(baseline_fnr_fpr)
+    print(alternative_fnr_fpr)
+
+    print(sde(alternative_fnr_fpr, baseline_fnr_fpr))
+    print(cev(alternative_fnr_fpr, baseline_fnr_fpr))
+    # figs = display(images, labels, pred, info_list, 0, 1)
+
+    # plt.show()
 
 
 if __name__ == '__main__':
-
+    torch.manual_seed(666)
     parser = argparse.ArgumentParser(description='Testing model for PMSE signal segmentation')
     parser.add_argument('--config-path', type=str, default='models\\options\\unet_config.ymal',
                         help='Path to confg.ymal file (Default unet_config.ymal)')
