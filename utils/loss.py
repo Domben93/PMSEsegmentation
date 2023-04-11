@@ -1,14 +1,12 @@
 from functools import partial
 from operator import itemgetter
 from typing import Tuple, Union, List, Callable
-
 import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
 from torch import Tensor, einsum
 from torch.nn import functional as F
-from torchmetrics import Dice
 from torchvision import transforms
 from scipy.ndimage import distance_transform_edt as eucl_distance
 
@@ -285,7 +283,7 @@ class BCE(nn.Module):
         self.bce = torch.nn.BCELoss()
 
     def forward(self, prob: Tensor, label: Tensor) -> Tensor:
-        return prob
+        return self.bce(prob, label)
 
 
 class BCESurfaceLoss(nn.Module):
@@ -388,24 +386,6 @@ class TverskyLoss(nn.Module):
         loss = (TP + self.eps) / (TP + self.alpha * FP + self.beta*FN + self.eps)
 
         return (1 - loss).mean()
-"""
-class SmoothingCrossEntropyLoss(nn.Module):
-
-    def __init__(self, N, epsilon=0.1):
-        super(SmoothingCrossEntropyLoss, self).__init__()
-        self.N = N
-        self.eps = epsilon
-
-    def forward(self, predicted: Tensor, label: Tensor) -> Tensor:
-
-        pass
-
-    def _label_smoothing(self, predicted: Tensor, label: Tensor) -> Tensor:
-
-        smoothed = 
-
-        return smoothed
-"""
 
 
 if __name__ == '__main__':

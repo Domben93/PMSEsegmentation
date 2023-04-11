@@ -95,7 +95,7 @@ def get_single_PMSE(args):
     ax[1].imshow(new_mask[:, :], cmap='jet', vmin=0, vmax=1)
     plt.show()
 
-    save_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Test\\single_test'
+    save_path = '/\\dataset\\Test\\single_test'
     save_image(inp_image.to(torch.float32), os.path.join(save_path, 'data', 'img1.png'))
     save_image(new_mask.to(torch.float32) / 255, os.path.join(save_path, 'label', 'img1.png'))
 
@@ -213,7 +213,7 @@ def predict(args):
     ax[4].axis('off')
     plt.show()
 
-    save_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Test\\single_test'
+    save_path = '/\\dataset\\Test\\single_test'
 
     save_image(inpainted_image[0, :, :].repeat(3, 1, 1), os.path.join(save_path, 'data', 'img1.png'))
     save_image(new_mask[:, :, :], os.path.join(save_path, 'label', 'img1.png'))

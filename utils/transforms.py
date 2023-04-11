@@ -710,8 +710,8 @@ if __name__ == '__main__':
     from torchmetrics.functional.classification import binary_jaccard_index
 
     torch.manual_seed(42)
-    im_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\data\\MAD6400_2008-07-02_arcd_60@vhf_400749_38_95.png'
-    msk_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\label\\MAD6400_2008-07-02_arcd_60@vhf_400749_38_95.png'
+    im_path = '/\\dataset\\Train\\data\\MAD6400_2008-07-02_arcd_60@vhf_400749_38_95.png'
+    msk_path = '/\\dataset\\Train\\label\\MAD6400_2008-07-02_arcd_60@vhf_400749_38_95.png'
 
     resize_const = QuasiResize([64, 64], 2, padding_mode='constant')
     resize_ref = QuasiResize([64, 64], 2, padding_mode='reflect')

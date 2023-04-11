@@ -3,22 +3,23 @@ import datetime
 import os
 import sys
 import warnings
-
+import yaml
 import numpy as np
 import torch
 import torch.nn as nn
+from matplotlib import pyplot as plt
 from PIL import Image
 from scipy.io import loadmat
 from scipy.interpolate import NearestNDInterpolator
 from typing import Union, List, Tuple, Dict, Type, Any, Optional
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from torchvision.datasets.folder import IMG_EXTENSIONS
+from torchvision.utils import save_image
 from collections import OrderedDict
 from pathlib import Path
 from imageio.v2 import imread
 from dotmap import DotMap
-import yaml
+
 
 __all__ = [
     'default_loader',
@@ -31,7 +32,9 @@ __all__ = [
     'load_yaml_as_dotmap',
     'remove_from_dataname',
     'EarlyStopper',
-    'remove_from_dataname_extended'
+    'remove_from_dataname_extended',
+    'save_images',
+    'display'
 ]
 
 
@@ -313,6 +316,67 @@ class EarlyStopper:
             if self.counter >= self.patience:
                 return True
         return False
+
+
+def display(images, labels, preds, info, sample_classes):
+    if not len(images) == len(labels) == len(preds):
+        raise ValueError('List of images, labels and predictions must be of equal length')
+
+    for sample_class in sample_classes:
+
+        fig, ax = plt.subplots(4, len(sample_class))
+        fig.add_gridspec(4, len(sample_class), wspace=0.0, hspace=0.0)
+
+        for n, name in enumerate(sample_class):
+
+            name_indices = [i for i, j in enumerate(info) if j == name]
+
+            if len(name_indices) > 1:
+                im = torch.cat([images[index] for index in name_indices], dim=1)
+                label = torch.cat([labels[index] for index in name_indices], dim=1)
+                pred = torch.cat([preds[index] for index in name_indices], dim=1)
+            else:
+                im = images[name_indices[0]]
+                label = labels[name_indices[0]]
+                pred = preds[name_indices[0]]
+
+            ax[0, n].imshow(im[:, :], cmap='jet', vmin=0, vmax=1)
+            ax[1, n].imshow(label[:, :], cmap='jet', vmin=0, vmax=1)
+            ax[2, n].imshow(pred[:, :], cmap='jet', vmin=0, vmax=1)
+            ax[3, n].imshow(np.where(pred[:, :] >= 0.5, 1, 0), cmap='jet', vmin=0, vmax=1)
+            ax[0, n].axis('off')
+            ax[1, n].axis('off')
+            ax[2, n].axis('off')
+            ax[3, n].axis('off')
+        plt.show()
+
+
+def save_images(images, labels, preds, save_path, names):
+    if not len(images) == len(labels) == len(preds):
+        raise ValueError('List of images, labels and predictions must be of equal length')
+
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+        os.mkdir(os.path.join(save_path, 'images'))
+        os.mkdir(os.path.join(save_path, 'labels'))
+        os.mkdir(os.path.join(save_path, 'preds'))
+
+    for info in names:
+
+        name_indices = [i for i, j in enumerate(names) if j == info]
+
+        if len(name_indices) > 1:
+            im = torch.cat([images[index] for index in name_indices], dim=1)
+            label = torch.cat([labels[index] for index in name_indices], dim=1)
+            pred = torch.cat([preds[index] for index in name_indices], dim=1)
+        else:
+            im = images[name_indices[0]]
+            label = labels[name_indices[0]]
+            pred = preds[name_indices[0]]
+
+        save_image(im, save_path + '/images/' + f'im_{info}' + '.png')
+        save_image(label, save_path + '/labels/' + f'mask_{info}' + '.png')
+        save_image(pred, save_path + '/preds/' + f'label_{info}' + '.png')
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import yaml
 from torch.utils.data import Dataset, DataLoader
-from .splitdata2 import SplitSegData
+from .splitdata import SplitSegData
 from .transforms import *
 from typing import Any, Callable, Optional, Tuple, TypeVar, Union, Dict
 from imageio.v2 import imread

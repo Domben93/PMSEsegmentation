@@ -4,7 +4,6 @@ import os.path
 import torch
 import argparse
 import datetime
-import time
 import pandas as pd
 import utils.loss
 from datetime import datetime
@@ -63,17 +62,17 @@ def main(args):
     }
 
     sample_classes = config.sample_classes.class_names
-    search_res = {}
-    # config.model_init.pre_trained_weights
+
     ds = '_Deep-supervision' if config.model_init.deep_supervision else ''
     aug = '_aug-Hflip-Cadj_'
 
+    # Folder name
     writer_name = f'{str(config.model.model_type)}_{str(config.model_init.init_features)}_' \
                   f'pretrain-{bool(config.model_init.pre_trained_weights)}_' \
                   f'loss-{str(config.optimizer.loss_type)}_' \
                   f'optim-{str(config.optimizer.optim_type)}' \
                   f'' + ds + aug
-
+    # File name
     file_name = f'lr_{config.optimizer.learning_rate}_' \
                 f'wd_{config.optimizer.weight_decay}_' \
                 f'betas_{config.optimizer.betas[0]}-{config.optimizer.betas[1]}_' \
@@ -110,10 +109,7 @@ def main(args):
               f' gamma: {config.learning_scheduler.gamma}, last epoch: {config.learning_scheduler.last_epoch} \n',
               f'--> Number of same model run: {i + 1} of {config.training.number_of_runs}')
 
-        search_res[i] = {
-            'miou': [],
-            'dsc': []
-        }
+
         iter = 0
         epoch = 0
         if config.training.early_stopping.early_stop:
@@ -124,7 +120,6 @@ def main(args):
 
         for epoch in range(1, config.training.epochs + 1):
 
-            t1 = time.time()
             model.train()
             train_loss, val_loss = .0, .0
 
@@ -194,8 +189,6 @@ def main(args):
             if validate_loader and (epoch % config.training.eval_interval == 0 or epoch == 1):
                 model.eval()
 
-                resize = t.QuasiResize([64, 64], 2)
-                undo_scaling = t.UndoQuasiResize(resize)
                 for data in validate_loader:
 
                     x, mask, info = data
@@ -241,9 +234,6 @@ def main(args):
                 best_model_state = deepcopy(model.state_dict())
                 best_optim_state = deepcopy(optimizer.state_dict())
 
-                search_res[i]['miou'] = miou_val
-                search_res[i]['dsc'] = dsc_val
-
             if early_stopping:
                 if early_stopping.early_stop(loss_val):
                     break
@@ -259,12 +249,10 @@ def main(args):
                        optimizer_state_dict=best_optim_state)
 
     df = pd.DataFrame(pd_data)
-    search = pd.DataFrame(search_res)
 
     if not os.path.exists(f'../Test/results/{writer_name}'):
         os.mkdir(f'../Test/results/{writer_name}')
 
-    search.to_csv(f'../Test/results/{writer_name}/{file_name}_best.csv', index=False)
     df.to_csv(f'../Test/results/{writer_name}/{file_name}_all.csv', index=False)
 
 
@@ -273,18 +261,6 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Training model for segmentation of PMSE signal')
 
-    parser.add_argument('--config-path', type=str, default='models\\options\\unet_config.ymal',
+    parser.add_argument('--config-path', type=str, default='config\\unet_config.ymal',
                         help='Path to confg.ymal file (Default unet_config.ymal)')
-
-    """
-    unet_model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
-                                in_channels=3, out_channels=1, init_features=32, pretrained=True)
-    
-    from models.unets import UNet
-    unet = UNet(3, 1, 32)
-
-    unet.init_weights(unet_model.state_dict())
-    torch.save({'model_state': unet.state_dict()}, 'weights\\mateuszbuda-brain-segmentation-pytorch.pt')
-    """
-
     main(parser.parse_args())

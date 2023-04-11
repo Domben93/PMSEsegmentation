@@ -1,0 +1,93 @@
+dataset:
+  path_complete: ../PMSE-segmentation/dataset/Complete/
+  path_train: ../PMSE-segmentation/dataset/Train/
+  path_validate: ../PMSE-segmentation/dataset/Validation/
+  path_test: ../PMSE-segmentation/dataset/Test/
+  max_scale: 2 # max allowed scaling of image
+  resize_shape: [ 64, 64 ]  # resize to shape 64x64
+  padding_type: 'constant'  # padding mode ['constant', 'reflect', 'replicate' or 'circular'] default constant value: 0
+
+  mean: 9.2158  # if None, it will be calculated. May take a lot of time for big datasets. Only calculated from train dataset
+  std: 1.5720  # if None, it will be calculated. May take a lot of time for big datasets. Only calculated from train dataset
+
+model:
+  path: ../models/unets.py
+  model_type: Unet_plusspluss
+  save_path: ../Test/weights/
+
+gpu: cuda:0
+
+model_init:
+    pre_trained_weights: null # path pretrained weights e.., ../Test/weights/mateuszbuda-brain-segmentation-pytorch.pt
+    pre_initiated: True # No effect if pre trained path specified. If called for a non-pre initiated network random_init will not be selected
+    freeze_layers: null # layers to freeze. If pretrained weights are unspecified this is ignored (default: all layers)
+    random_init: uniform # random initiation type. IGNORED if pretrained weights are specified
+    in_channels: 3 # 3 for rgb. Note that
+    out_channels: 1 # if in_channels is 1 and pretrained weights has 3 channels channel 1 is chosen
+    init_features: 64
+    deep_supervision: False # Only available for Unet++. Error will be thrown if chosen for another model architecture
+    avg_output: False # average output from all deep supervision layers
+    pre_init_weights: null
+    fine_tune: False
+
+dataloader:
+  batch_size: 16
+  num_workers: 4
+  shuffle: True
+
+# Hyper parameters
+optimizer:
+  loss_type: DiceBCELoss
+  optim_type: adam # optimizer type
+  learning_rate: 0.001 # Initial learning rate
+  layer_learning_rate: False
+  momentum: 0.9  # Uncomment if wanted to be used. Not available for Adam and some other optimizer algorithms
+  weight_decay: 0.004
+  betas: [0.9, 0.999]
+
+learning_scheduler:
+  step_size: 50 # lr step every n epochs
+  gamma: 0.5 # lr = gamma * lr every step_size
+  last_epoch: -1 # -1 is for not specified
+
+training:
+  number_of_runs: 5
+  epochs: 100 # number of epochs
+  eval_interval: 1 # Set to None or 0 if no evaluation is wanted
+  save_best: True
+  early_stopping:
+    early_stop: True
+    patience: 20
+    min_delta: 0
+
+
+sample_classes:
+  class_hres: [['MAD6400_2008-07-02_arcd_60@vhf_400749', 'MAD6400_2009-06-10_arcd_60@vhf_422844'],
+                ['MAD6400_2008-06-30_manda_60@vhf_060693', 'MAD6400_2009-07-14_manda_60@vhf_684778',
+                 'MAD6400_2009-07-16_manda_60@vhf_655441', 'MAD6400_2009-07-17_manda_60@vhf_633279',
+                 'MAD6400_2009-07-30_manda_60@vhf_779294', 'MAD6400_2010-07-07_manda_60@vhf_576698',
+                 'MAD6400_2010-07-08_manda_59', 'MAD6400_2010-07-09_manda_60@vhf_470083'],
+                  ['MAD6400_2015-08-10_manda_59', 'MAD6400_2015-08-12_manda_59',
+                   'MAD6400_2015-08-13_manda_59', 'MAD6400_2015-08-20_manda_59'],
+                  ['MAD6400_2011-06-01_manda_59', 'MAD6400_2011-06-08_manda_59',
+                   'MAD6400_2011-06-09_manda_59', 'MAD6400_2014-07-01_manda_48@vhf_178333']]
+
+  class_granular: [['MAD6400_2008-07-02_arcd_60@vhf_400749', 'MAD6400_2009-06-10_arcd_60@vhf_422844',
+                 'MAD6400_2009-07-14_manda_60@vhf_684778', 'MAD6400_2009-07-16_manda_60@vhf_655441',
+                 'MAD6400_2009-07-30_manda_60@vhf_779294', 'MAD6400_2010-07-09_manda_60@vhf_470083',
+                 'MAD6400_2011-06-01_manda_59', 'MAD6400_2011-06-08_manda_59',
+                 'MAD6400_2011-06-09_manda_59', 'MAD6400_2014-07-01_manda_48@vhf_178333',
+                 'MAD6400_2015-08-10_manda_59', 'MAD6400_2015-08-13_manda_59', 'MAD6400_2015-08-20_manda_59'],
+                ['MAD6400_2008-06-30_manda_60@vhf_060693', 'MAD6400_2009-07-17_manda_60@vhf_633279',
+                 'MAD6400_2010-07-07_manda_60@vhf_576698', 'MAD6400_2010-07-08_manda_59',
+                 'MAD6400_2015-08-12_manda_59']]
+
+  class_resolution: [['MAD6400_2008-07-02_arcd_60@vhf_400749', 'MAD6400_2009-06-10_arcd_60@vhf_422844' ,
+                      'MAD6400_2008-06-30_manda_60@vhf_060693', 'MAD6400_2009-07-14_manda_60@vhf_684778',
+                      'MAD6400_2009-07-16_manda_60@vhf_655441', 'MAD6400_2009-07-17_manda_60@vhf_633279',
+                      'MAD6400_2009-07-30_manda_60@vhf_779294', 'MAD6400_2010-07-07_manda_60@vhf_576698',
+                      'MAD6400_2010-07-08_manda_59', 'MAD6400_2010-07-09_manda_60@vhf_470083' ],
+                    [ 'MAD6400_2015-08-10_manda_59', 'MAD6400_2015-08-12_manda_59',
+                      'MAD6400_2015-08-13_manda_59', 'MAD6400_2015-08-20_manda_59' ,
+                      'MAD6400_2011-06-01_manda_59', 'MAD6400_2011-06-08_manda_59',
+                      'MAD6400_2011-06-09_manda_59', 'MAD6400_2014-07-01_manda_48@vhf_178333' ]]

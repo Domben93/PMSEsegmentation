@@ -13,6 +13,7 @@ import os
 import math
 from skimage import measure
 from tqdm import tqdm
+import argparse
 
 
 class GenerateTrainData:
@@ -75,8 +76,8 @@ class GenerateTrainData:
                 c, h, w = o_image.shape
                 batch = math.ceil(w / h)
 
-                #o_image = o_image[:, :, :]
-                #o_mask = o_mask[:, :, :]
+                # o_image = o_image[:, :, :]
+                # o_mask = o_mask[:, :, :]
 
                 if self.object_mask_padding:
                     mask = torch.logical_not(self.padding(o_mask[0, :, :], self.object_mask_padding).repeat(3, 1, 1))
@@ -106,7 +107,8 @@ class GenerateTrainData:
                         raw_out = raw_out.clamp(0.0, 1.0)
                         mask_ = mask_.detach().cpu()
                         inp_ = inp_.detach().cpu()
-                        scaled_down = self.scale_down((mask_ * inp_ + (1 - mask_) * raw_out).squeeze(), (h, (idx_max - idx_min)))
+                        scaled_down = self.scale_down((mask_ * inp_ + (1 - mask_) * raw_out).squeeze(),
+                                                      (h, (idx_max - idx_min)))
                         inp_list.append(scaled_down)
 
                 if len(inp_list) > 1:
@@ -304,7 +306,6 @@ class InpaintPadding:
                 if self.continuous_pad and (w_continuous or h_continuous):
                     continuous = True
                     while continuous:
-
                         break
 
                 else:
@@ -322,7 +323,6 @@ class InpaintPadding:
                     inp_list.append(inpainted_img)
 
             for n, (inp_img, o_img, o_msk) in enumerate(zip(inp_list, original_im_list, original_mask_list)):
-
                 im_h, im_w = inp_img.shape[-2:]
                 o_im_h, o_im_w = o_img.shape[-2:]
 
@@ -335,37 +335,48 @@ class InpaintPadding:
                 new_mask = torch.zeros(inp_img.shape[-2:])
                 new_mask[h_start:h_end, w_start:w_end] = torch.logical_not(o_msk[0, :, :])
 
-                save_image(inp_img.repeat(3, 1, 1), os.path.join(self.save_path, 'data', info['image_name'] + f'_{n}.png'))
+                save_image(inp_img.repeat(3, 1, 1),
+                           os.path.join(self.save_path, 'data', info['image_name'] + f'_{n}.png'))
                 save_image(new_mask / 255, os.path.join(self.save_path, 'label', info['image_name'] + f'_{n}.png'))
 
 
-if __name__ == '__main__':
-    """
-    pad_dataset = InpaintPadding(data_path="C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train",
-                                 save_path="C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\padded_data",
-                                 device=0,
-                                 model_weight_path="C:\\Users\\dombe\\PycharmProjects\\Test\\partial_conv/ckpt/0310_1602_08/models/5000.pth",
-                                 object_mask_padding=2)
-
-    pad_dataset.pad_data()
-    """
-    torch.manual_seed(42)
-    transforms = [RandomHorizontalFlip(0.5),
-                  RandomRotation(p=0.5, rotation_limit=5, rotation_as_max_pixel_shift=True),
-                  #RandomResize(p=0.25, scale=[-3, 3]),
-                  RandomPositionShift(p=0.25, max_shift_h=3, max_shift_w=3)
-]
-    
-    data_gen = GenerateTrainData(original_data_path="C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train",
+def generate_data(args, transforms):
+    data_gen = GenerateTrainData(original_data_path=args.data_path,
                                  transform=transforms,
-                                 model_weight_path="C:\\Users\\dombe\\PycharmProjects\\Test\\partial_conv\\ckpt\\0310_1433_18\\models\\11000.pth",
-                                 device=0,
-                                 save_path="C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\generated_data",
+                                 model_weight_path=args.model_path,
+                                 device=args.device,
+                                 save_path=args.save_path,
                                  mask_extraction_padding=0,
-                                 object_mask_padding=1,
-                                 random_erase_object=0.5)
+                                 object_mask_padding=args.padding,
+                                 random_erase_object=args.random_erase)
 
-    data_gen.generate(100, copies_original=10)
+    data_gen.generate(args.num_samples, copies_original=args.num_original)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Generate ObjectAug data')
+    parser.add_argument('--data-path', type=str, default='../PMSE-segmentation/dataset/Train')
+    parser.add_argument('--model-path', type=str,
+                        default='../PMSE-segmentation/partial_conv/ckpt/0310_1433_18/models/11000.pth')
+    parser.add_argument('--device', type=int, default=0)
+    parser.add_argument('--save-path', type=str, default='../PMSE-segementation/dataset/Train/generated_data')
+    parser.add_argument('--padding', type=int, default=1, help='Padding range of ground-truth')
+    parser.add_argument('--random-erase', type=float, default=.0, help='Percentage of objects to be randomly erased.'
+                                                                       'Must be between 0 and 1 where 0 mean none'
+                                                                       'erased and 1 means all erased')
+    parser.add_argument('--num-samples', type=int, default=50, help='How many times the dataset is run through the'
+                                                                    'ObjectAug method.')
+    parser.add_argument('--num-original', type=int, default=10, help='Number of copies from the original dataset to'
+                                                                     'balance the new dataset with original data.')
+
+    torch.manual_seed(42)
+    transforms = [  # RandomHorizontalFlip(0.5),
+                    # RandomRotation(p=0.5, rotation_limit=5, rotation_as_max_pixel_shift=True),
+                    # RandomResize(p=0.25, scale=[-3, 3]),
+                    # RandomPositionShift(p=0.25, max_shift_h=3, max_shift_w=3)
+                 ]
+
+    generate_data(parser.parse_args(), transforms)
     """
     gen_dataset = PMSE_Dataset("C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\padded_data\\data",
                                "C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\padded_data\\label")
@@ -387,5 +398,3 @@ if __name__ == '__main__':
     ax[1, 1].imshow(msk1[0, :, :], cmap='jet', vmin=0, vmax=1)
     plt.show()
     """
-
-

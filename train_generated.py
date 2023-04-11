@@ -1,23 +1,16 @@
 import importlib
 import math
 import os.path
-import random
-
 import torch
 import argparse
 import datetime
-import time
-import utils.loss
-from datetime import datetime, timedelta
+from datetime import datetime
 from utils import transforms as t
 from utils.dataset import get_dataloader
 from utils.utils import *
 from models.utils import *
-from torch.utils.tensorboard import SummaryWriter
-from utils.metrics import SegMets, sde, cev
+from utils.metrics import SegMets
 import pandas as pd
-import matplotlib.pyplot as plt
-from torchmetrics.functional.classification import binary_jaccard_index
 from copy import deepcopy
 
 
@@ -27,9 +20,6 @@ def main(args):
     config = load_yaml_as_dotmap(args.config_path)
 
     device = (torch.device(config.gpu) if torch.cuda.is_available() else torch.device('cpu'))
-
-    augmentation_list = [t.RandomHorizontalFlip(0.25),
-                         t.RandomVerticalFlip(0.25)]
 
     train_pair_compose = t.PairCompose([
         [t.RandomHorizontalFlip(0.5)],
@@ -73,16 +63,17 @@ def main(args):
     }
 
     sample_classes = config.sample_classes.class_names
-    search_res = {}
+
     ds = '_DS' if config.model_init.deep_supervision else ''
     aug = 'Hflip-Cadj_'
-    # {bool(config.model_init.pre_trained_weights)}_'
+
+    # Folder name
     writer_name = f'{str(config.model.model_type)}_{str(config.model_init.init_features)}_' \
                   f'pretrain-{bool(config.model_init.pre_trained_weights)}_' \
                   f'loss-{str(config.optimizer.loss_type)}_' \
                   f'optim-{str(config.optimizer.optim_type)}_' \
                   f'generated_dataset_random-erase_' + aug + ds
-
+    # File name
     file_name = f'lr_{config.optimizer.learning_rate}_' \
                 f'wd_{config.optimizer.weight_decay}_' \
                 f'betas_{config.optimizer.betas[0]}-{config.optimizer.betas[1]}_' \
@@ -97,7 +88,7 @@ def main(args):
 
     for i in range(config.training.number_of_runs):
 
-        best_met = 0 #math.inf
+        best_met = math.inf
         model = load_model(args.config_path)
         model.to(device)
         optimizer, lr_scheduler = load_optimizer(config, model, grad_true_only=True,
@@ -115,13 +106,6 @@ def main(args):
               f'--> learning schedule: Step size: {config.learning_scheduler.step_size},'
               f' gamma: {config.learning_scheduler.gamma}, last epoch: {config.learning_scheduler.last_epoch} \n',
               f'--> Number of same model run: {i + 1} of {config.training.number_of_runs}')
-
-        search_res[i] = {
-            'miou': [],
-            'dsc': [],
-            'auc': [],
-            'acc': [],
-        }
 
         epoch = 0
         if config.training.early_stopping.early_stop:
@@ -238,8 +222,8 @@ def main(args):
                           f' mIoU {miou_val:.6f},'
                           f' dsc {dsc_val:.6f}')
 
-                    if dsc_val > best_met and config.training.save_best:
-                        best_met = dsc_val
+                    if loss_val < best_met and config.training.save_best:
+                        best_met = loss_val
                         best_model_state = deepcopy(model.state_dict())
                         best_optim_state = deepcopy(optimizer.state_dict())
                         print('Saving best model')
@@ -265,12 +249,10 @@ def main(args):
                        optimizer_state_dict=best_optim_state)
 
     df = pd.DataFrame(pd_data)
-    search = pd.DataFrame(search_res)
 
     if not os.path.exists(f'../Test/results/{writer_name}'):
         os.mkdir(f'../Test/results/{writer_name}')
 
-    search.to_csv(f'../Test/results/{writer_name}/{file_name}_best.csv', index=False)
     df.to_csv(f'../Test/results/{writer_name}/{file_name}_all.csv', index=False)
 
 
@@ -279,19 +261,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Training model for segmentation of PMSE signal')
 
-    parser.add_argument('--config-path', type=str, default='models\\options\\train_generated_config.ymal',
+    parser.add_argument('--config-path', type=str, default='config\\train_generated_config.ymal',
                         help='Path to confg.ymal file (Default train_generated_config.ymal)')
-
-    """
-    unet_model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
-                                in_channels=3, out_channels=1, init_features=32, pretrained=True)
-
-    from models.unets import UNet
-    unet = UNet(3, 1, 32)
-
-    unet.init_weights(unet_model.state_dict())
-    torch.save({'model_state': unet.state_dict()}, 'weights\\mateuszbuda-brain-segmentation-pytorch.pt')
-    """
 
     main(parser.parse_args())
 

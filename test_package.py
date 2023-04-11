@@ -5,8 +5,8 @@ from models.unets import UNet
 
 if __name__ == '__main__':
     torch.manual_seed(666)
-    tr_path = '../Test/partial_conv/data/train'
-    val_path = '../Test/partial_conv/data/validation'
+    tr_path = '/partial_conv/data/train'
+    val_path = '/partial_conv/data/validation'
 
     model = Generic_UNetPlusPlus(input_channels=3,
                                  base_num_features=64,

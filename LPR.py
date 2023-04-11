@@ -193,9 +193,9 @@ if __name__ == '__main__':
     loader = get_dataloader(config_path, transforms=pair_compose, mode='test')
 
     lpr = LPR(model='Unet_vgg',
-              model_weight_path='../Test/weights/Unet_vgg_64_pretrain-False_loss-BinaryDiceLoss_optim-adam_aug-none/lr_0.003_wd_0.007_betas_0.9-0.999_momentum_0.9_freezed-None_0.pt',
+              model_weight_path='/weights/Unet_vgg_64_pretrain-False_loss-BinaryDiceLoss_optim-adam_aug-none/lr_0.003_wd_0.007_betas_0.9-0.999_momentum_0.9_freezed-None_0.pt',
               dataloader=loader,
-              save_path='../Test/results/images/relevance_map/unet64-pretrained/',
+              save_path='/results/images/relevance_map/unet64-pretrained/',
               init_features=64,
               global_relevance_max=True)
 

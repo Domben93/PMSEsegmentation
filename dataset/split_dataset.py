@@ -1,6 +1,6 @@
 import os
 import yaml
-from utils.splitdata2 import SplitSegData, StratifiedSegDataSplit
+from utils.splitdata import SplitSegData, StratifiedSegDataSplit
 import torch
 import utils.transforms as t
 
