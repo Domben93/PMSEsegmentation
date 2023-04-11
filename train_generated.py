@@ -1,18 +1,23 @@
 import importlib
 import math
 import os.path
+import random
+
 import torch
 import argparse
 import datetime
 import time
-import pandas as pd
 import utils.loss
-from datetime import datetime
+from datetime import datetime, timedelta
 from utils import transforms as t
 from utils.dataset import get_dataloader
 from utils.utils import *
 from models.utils import *
-from utils.metrics import SegMets
+from torch.utils.tensorboard import SummaryWriter
+from utils.metrics import SegMets, sde, cev
+import pandas as pd
+import matplotlib.pyplot as plt
+from torchmetrics.functional.classification import binary_jaccard_index
 from copy import deepcopy
 
 
@@ -23,21 +28,26 @@ def main(args):
 
     device = (torch.device(config.gpu) if torch.cuda.is_available() else torch.device('cpu'))
 
+    augmentation_list = [t.RandomHorizontalFlip(0.25),
+                         t.RandomVerticalFlip(0.25)]
+
     train_pair_compose = t.PairCompose([
-        # [t.RandomVerticalFlip(0.5)],
-        # [t.RandomHorizontalFlip(0.5)],
-        # [t.RandomContrastAdjust(0.5, (0.8, 1.2))],
+        [t.RandomHorizontalFlip(0.5)],
+        # [t.RandomVerticalFlip(0.25)],
+        [t.RandomContrastAdjust(0.5, (0.8, 1.2))],
+        # [t.RandomBrightnessAdjust(0.5, (0.5, 1.5))],
+        # [t.ObjectAugmentation(augmentation_list)],
         [t.ConvertDtype(torch.float32), t.ConvertDtype(torch.float32)],
         [t.Normalize((0, 1), (0, 255), return_type=torch.float32), None],
-        [t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale, padding_mode='constant'),
-        t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale, padding_mode='constant')]
+        [t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale),
+         t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale)],
     ])
 
     val_pair_compose = t.PairCompose([
         [t.ConvertDtype(torch.float32), t.ConvertDtype(torch.float32)],
         [t.Normalize((0, 1), (0, 255), return_type=torch.float32), None],
-        [t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale, padding_mode='constant'),
-         t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale, padding_mode='constant')]
+        [t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale),
+         t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale)],
     ])
 
     train_loader = get_dataloader(args.config_path, train_pair_compose)
@@ -64,21 +74,20 @@ def main(args):
 
     sample_classes = config.sample_classes.class_names
     search_res = {}
-    # config.model_init.pre_trained_weights
-    ds = '_Deep-supervision' if config.model_init.deep_supervision else ''
-    aug = '_aug-Hflip-Cadj_'
-
+    ds = '_DS' if config.model_init.deep_supervision else ''
+    aug = 'Hflip-Cadj_'
+    # {bool(config.model_init.pre_trained_weights)}_'
     writer_name = f'{str(config.model.model_type)}_{str(config.model_init.init_features)}_' \
                   f'pretrain-{bool(config.model_init.pre_trained_weights)}_' \
                   f'loss-{str(config.optimizer.loss_type)}_' \
-                  f'optim-{str(config.optimizer.optim_type)}' \
-                  f'' + ds + aug
+                  f'optim-{str(config.optimizer.optim_type)}_' \
+                  f'generated_dataset_random-erase_' + aug + ds
 
     file_name = f'lr_{config.optimizer.learning_rate}_' \
                 f'wd_{config.optimizer.weight_decay}_' \
                 f'betas_{config.optimizer.betas[0]}-{config.optimizer.betas[1]}_' \
                 f'momentum_{config.optimizer.momentum}_' \
-                f'freezed-{"".join([str(x) for x in config.model_init.freeze_layers]) if config.model_init.freeze_layers is not None else None}_'\
+                f'freezed-{"".join([str(x) for x in config.model_init.freeze_layers]) if config.model_init.freeze_layers is not None else None}_'
 
     if not os.path.exists(os.path.join(config.model.save_path, writer_name)):
         os.mkdir(os.path.join(config.model.save_path, writer_name))
@@ -88,9 +97,8 @@ def main(args):
 
     for i in range(config.training.number_of_runs):
 
-        best_met = math.inf
+        best_met = 0 #math.inf
         model = load_model(args.config_path)
-
         model.to(device)
         optimizer, lr_scheduler = load_optimizer(config, model, grad_true_only=True,
                                                  lr=config.optimizer.learning_rate,
@@ -98,9 +106,7 @@ def main(args):
                                                  betas=config.optimizer.betas,
                                                  momentum=config.optimizer.momentum)
 
-        loss_func = getattr(importlib.import_module('utils.loss'), config.optimizer.loss_type)()
-
-        #loss_func = utils.loss.DiceSurfaceLoss(strategy='rebalance', inc_reb_rate_iter=5)
+        loss_func = getattr(importlib.import_module('utils.loss'), config.optimizer.loss_type)() #utils.loss.DiceSurfaceLoss(strategy='increase', inc_reb_rate_iter=10)
 
         print(f'Starting Training of {type(model).__name__} with \n'
               f'--> Optimizer: {type(optimizer).__name__}\n'
@@ -112,43 +118,35 @@ def main(args):
 
         search_res[i] = {
             'miou': [],
-            'dsc': []
+            'dsc': [],
+            'auc': [],
+            'acc': [],
         }
-        iter = 0
+
         epoch = 0
         if config.training.early_stopping.early_stop:
             early_stopping = EarlyStopper(patience=config.training.early_stopping.patience,
                                           min_delta=config.training.early_stopping.min_delta)
         else:
             early_stopping = False
+        iter_ = 0
+        running = True
+        while running:
 
-        for epoch in range(1, config.training.epochs + 1):
-
-            t1 = time.time()
             model.train()
-            train_loss, val_loss = .0, .0
+            train_loss = .0
 
             for num, data in enumerate(train_loader):
-                iter += 1
                 x, mask, info = data
                 x = x.to(device)
                 mask = mask.to(device)
                 optimizer.zero_grad()
+                info = remove_from_dataname_extended(info['image_name'], sample_classes)
 
                 with torch.set_grad_enabled(mode=True):
-
                     predicted = model(x)
 
-                    if isinstance(predicted, tuple):
-                        if len(predicted) == 1:
-                            predicted = predicted[0]
-                        elif config.model_init.avg_output:
-                            predicted = (predicted[0] + predicted[1] + predicted[2] + predicted[3]) / len(predicted)
-                        else:
-                            predicted = predicted
-                    info = remove_from_dataname_extended(info['image_name'], sample_classes)
-
-                    if isinstance(predicted, tuple) and config.model_init.deep_supervision:
+                    if config.model_init.deep_supervision:
                         losses = []
                         for pred in predicted:
                             losses.append(loss_func(pred, mask))
@@ -161,13 +159,15 @@ def main(args):
                             else:
                                 l.backward(retain_graph=True)
 
-                        predicted = (predicted[0] + predicted[1] + predicted[2] + predicted[3]) / len(predicted)
+                        if config.model_init.avg_output:
+                            predicted = (predicted[0] + predicted[1] + predicted[2] + predicted[3]) / len(predicted)
+                        else:
+                            predicted = predicted[0]
+
                         metrics(predicted.detach().cpu(), mask.detach().cpu(), info)
-                        train_loss += ((losses[0].item() +
-                                        losses[1].item() +
-                                        losses[2].item() +
-                                        losses[3].item()) / len(losses))
+                        train_loss += ((losses[0].item() + losses[1].item() + losses[2].item() + losses[3].item()) / len(losses))
                     else:
+
                         loss = loss_func(predicted, mask)
 
                         metrics(predicted.detach().cpu(), mask.detach().cpu(), info)
@@ -178,75 +178,81 @@ def main(args):
                         optimizer.step()
                         lr_scheduler.step()
 
-            loss_train = (float(train_loss / len(train_loader)))
-            miou_train = float(metrics.mIoU(sample_classes=sample_classes, multidim_average='global'))
-            dsc_train = float(metrics.dice(sample_classes=sample_classes, multidim_average='global'))
+                if iter_ % config.training.eval_interval == 0:
 
-            metrics.reset()
+                    loss_train = (float(train_loss / (num + 1)))
+                    miou_train = float(metrics.mIoU(sample_classes=sample_classes, multidim_average='global'))
+                    dsc_train = float(metrics.dice(sample_classes=sample_classes, multidim_average='global'))
 
-            pd_data['epoch'].append(epoch)
-            pd_data['iou'].append(miou_train)
-            pd_data['dsc'].append(dsc_train)
-            pd_data['loss'].append(loss_train)
-            pd_data['event'].append('Train')
-            pd_data['run'].append(i)
+                    metrics.reset()
 
-            if validate_loader and (epoch % config.training.eval_interval == 0 or epoch == 1):
-                model.eval()
+                    pd_data['epoch'].append(iter_)
+                    pd_data['iou'].append(miou_train)
+                    pd_data['dsc'].append(dsc_train)
+                    pd_data['loss'].append(loss_train)
+                    pd_data['event'].append('Train')
+                    pd_data['run'].append(i)
 
-                resize = t.QuasiResize([64, 64], 2)
-                undo_scaling = t.UndoQuasiResize(resize)
-                for data in validate_loader:
+                    model.eval()
+                    val_loss = .0
+                    for data in validate_loader:
+                        x, mask, info = data
+                        x = x.to(device)
+                        mask = mask.to(device)
+                        with torch.no_grad():
+                            predicted = model(x)
 
-                    x, mask, info = data
-                    x = x.to(device)
-                    mask = mask.to(device)
-                    with torch.no_grad():
+                            if isinstance(predicted, tuple):
+                                if config.model_init.deep_supervision:
+                                    predicted = (predicted[0] + predicted[1] + predicted[2] + predicted[3]) / len(
+                                        predicted)
+                                else:
+                                    predicted = predicted[0]
 
-                        predicted = model(x)
+                            loss = loss_func(predicted, mask)
+                            info = remove_from_dataname(info['image_name'])
 
-                        if config.model_init.deep_supervision:
-                            if config.model_init.avg_output:
-                                predicted = (predicted[0] + predicted[1] + predicted[2] + predicted[3]) / len(predicted)
-                            else:
-                                predicted = predicted[0]
+                            metrics(predicted.detach().cpu(), mask.detach().cpu(), info)
 
-                        loss = loss_func(predicted, mask)
-                        info = remove_from_dataname_extended(info['image_name'], sample_classes)
+                            val_loss += loss.item()
 
-                        metrics(predicted.detach().cpu(), mask.detach().cpu(), info)
+                    loss_val = (float(val_loss / len(validate_loader)))
+                    miou_val = float(metrics.mIoU(sample_classes=sample_classes, multidim_average='global'))
+                    dsc_val = float(metrics.dice(sample_classes=sample_classes, multidim_average='global'))
 
-                        val_loss += loss.item()
+                    metrics.reset()
+                    model.train()
 
-                loss_val = (float(val_loss / len(validate_loader)))
-                miou_val = float(metrics.mIoU(sample_classes=sample_classes, multidim_average='global'))
-                dsc_val = float(metrics.dice(sample_classes=sample_classes, multidim_average='global'))
-                metrics.reset()
+                    pd_data['epoch'].append(iter_)
+                    pd_data['iou'].append(miou_val)
+                    pd_data['loss'].append(loss_val)
+                    pd_data['dsc'].append(dsc_val)
+                    pd_data['event'].append('Validation')
+                    pd_data['run'].append(i)
 
-                pd_data['epoch'].append(epoch)
-                pd_data['iou'].append(miou_val)
-                pd_data['loss'].append(loss_val)
-                pd_data['dsc'].append(dsc_val)
-                pd_data['event'].append('Validation')
-                pd_data['run'].append(i)
+                    print(f'{datetime.now()}, Iter {iter_} of {config.training.iters}:\n'
+                          f'Training: loss {loss_train:.6f},'
+                          f' mIoU {miou_train:.6f},'
+                          f' dsc {dsc_train:.6f}')
+                    print(f'Validation: loss {loss_val:.6f},'
+                          f' mIoU {miou_val:.6f},'
+                          f' dsc {dsc_val:.6f}')
 
-            if epoch == 1 or epoch % 1 == 0:
-                print(f'{datetime.now()}, Epoch {epoch} of {config.training.epochs}, iter {iter}:\n'
-                      f'Training: loss {loss_train:.6f}, mIoU {miou_train:.6f}, dsc {dsc_train:.6f}')
-                if validate_loader:
-                    print(f'Validation: loss {loss_val:.6f}, mIoU {miou_val:.6f}, dsc {dsc_val:.6f}')
+                    if dsc_val > best_met and config.training.save_best:
+                        best_met = dsc_val
+                        best_model_state = deepcopy(model.state_dict())
+                        best_optim_state = deepcopy(optimizer.state_dict())
+                        print('Saving best model')
 
-            if loss_val < best_met and config.training.save_best:
-                best_met = loss_val
-                best_model_state = deepcopy(model.state_dict())
-                best_optim_state = deepcopy(optimizer.state_dict())
+                    if iter_ == config.training.iters:
+                        running = False
+                        break
 
-                search_res[i]['miou'] = miou_val
-                search_res[i]['dsc'] = dsc_val
-
-            if early_stopping:
-                if early_stopping.early_stop(loss_val):
-                    break
+                    if early_stopping:
+                        if early_stopping.early_stop(loss_val):
+                            running = False
+                            break
+                iter_ += 1
 
         if config.training.save_best:
             save_model(model=model,
@@ -273,13 +279,13 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Training model for segmentation of PMSE signal')
 
-    parser.add_argument('--config-path', type=str, default='models\\options\\unet_config.ymal',
-                        help='Path to confg.ymal file (Default unet_config.ymal)')
+    parser.add_argument('--config-path', type=str, default='models\\options\\train_generated_config.ymal',
+                        help='Path to confg.ymal file (Default train_generated_config.ymal)')
 
     """
     unet_model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
                                 in_channels=3, out_channels=1, init_features=32, pretrained=True)
-    
+
     from models.unets import UNet
     unet = UNet(3, 1, 32)
 
@@ -288,3 +294,4 @@ if __name__ == '__main__':
     """
 
     main(parser.parse_args())
+

@@ -1,9 +1,9 @@
 
 data_path:
   path_complete: C:\Users\dombe\PycharmProjects\Test\dataset\Complete
-  path_train: C:\Users\dombe\PycharmProjects\Test\dataset\Train
-  path_validate: C:\Users\dombe\PycharmProjects\Test\dataset\Validation
-  path_test: C:\Users\dombe\PycharmProjects\Test\dataset\Test
+  path_train: C:\Users\dombe\PycharmProjects\Test\partial_conv\dat\Train
+  path_validate: C:\Users\dombe\PycharmProjects\Test\partial_conv\data\Validation
+  path_test: C:\Users\dombe\PycharmProjects\Test\partial_conv\data\Test
 
 
 data_split:

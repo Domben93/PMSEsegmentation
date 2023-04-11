@@ -78,7 +78,6 @@ def up_sample(in_channels: int,
                                                          stride=(stride, stride)
                                                          ))])
 
-
 def sequential_block_unet(in_channels, out_channels, drop_out=False, p=0.5) -> OrderedDict:
     """
 
@@ -98,8 +97,8 @@ def sequential_block_unet(in_channels, out_channels, drop_out=False, p=0.5) -> O
             'Conv1', conv3x3(in_channels=in_channels,
                              out_channels=out_channels,
                              padding=1,
-                             padding_mode='replicate',
-                             bias=False)
+                             padding_mode='zeros',
+                             bias=True)
         ),
         ('BatchNorm1', nn.BatchNorm2d(num_features=out_channels)),
         ('ReLU1', nn.ReLU(inplace=True)),
@@ -107,11 +106,39 @@ def sequential_block_unet(in_channels, out_channels, drop_out=False, p=0.5) -> O
             'Conv2', conv3x3(in_channels=out_channels,
                              out_channels=out_channels,
                              padding=1,
-                             padding_mode='replicate',
-                             bias=False)
+                             padding_mode='zeros',
+                             bias=True)
         ),
         ('BatchNorm2', nn.BatchNorm2d(num_features=out_channels)),
         ('ReLU2', nn.ReLU(inplace=True))
+    ])
+
+    if drop_out:
+        odict_.update([('DropOut', nn.Dropout2d(p=p))])
+
+    return odict_
+
+
+def sequentail_block_unetplusspluss(in_channels, out_channels, drop_out=False, p=0.5):
+    odict_ = OrderedDict([
+        (
+            'Conv1', conv3x3(in_channels=in_channels,
+                             out_channels=out_channels,
+                             padding=1,
+                             padding_mode='zeros',
+                             bias=True)
+        ),
+        ('BatchNorm1', nn.BatchNorm2d(num_features=out_channels)),
+        ('ReLU1', nn.LeakyReLU(inplace=True)),
+        (
+            'Conv2', conv3x3(in_channels=out_channels,
+                             out_channels=out_channels,
+                             padding=1,
+                             padding_mode='zeros',
+                             bias=True)
+        ),
+        ('BatchNorm2', nn.BatchNorm2d(num_features=out_channels)),
+        ('ReLU2', nn.LeakyReLU(inplace=True))
     ])
 
     if drop_out:
@@ -160,6 +187,18 @@ from typing import TypeVar
 T = TypeVar('T', bound='Module')
 
 
+class Upsample(nn.Module):
+
+    def __init__(self, size=None, scale_factor=None, mode='nearest'):
+        super(Upsample, self).__init__()
+        self.mode = mode
+        self.scale_factor = scale_factor
+        self.size = size
+
+    def forward(self, x):
+        return f.interpolate(x, size=self.size, scale_factor=self.scale_factor, mode=self.mode)
+
+
 class ResidualConv(nn.Module):
 
     def __init__(self, in_channels, out_channels):
@@ -186,7 +225,8 @@ class PSPPooling(nn.Module):
             self.pooling_pyramid.append(self._make_pyramid_level(in_features, size))
 
         self.pyramid_output = nn.Sequential(OrderedDict([
-            (f'outConv', nn.Conv2d(in_features * (len(poolingsizes) + 1), out_features, kernel_size=(1, 1), bias=False)),
+            (
+            f'outConv', nn.Conv2d(in_features * (len(poolingsizes) + 1), out_features, kernel_size=(1, 1), bias=False)),
             (f'outBN', nn.BatchNorm2d(num_features=out_features)),
             (f'outReLU', nn.ReLU())
         ]))

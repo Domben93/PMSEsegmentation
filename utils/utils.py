@@ -20,7 +20,6 @@ from imageio.v2 import imread
 from dotmap import DotMap
 import yaml
 
-
 __all__ = [
     'default_loader',
     'mat_loader',
@@ -29,13 +28,15 @@ __all__ = [
     'CustomOrderedDict',
     'min_max_dataset',
     'save_model',
-    'load_yaml_as_dotmap'
+    'load_yaml_as_dotmap',
+    'remove_from_dataname',
+    'EarlyStopper',
+    'remove_from_dataname_extended'
 ]
 
 
 def default_loader(path: str, return_type: Union[Type[Image.Image], Type[np.ndarray]] = np.ndarray, **kwargs) -> Union[
-                   Image.Image, np.ndarray]:
-
+    Image.Image, np.ndarray]:
     from pathlib import Path
 
     if not os.path.exists(path):
@@ -65,8 +66,6 @@ def default_loader(path: str, return_type: Union[Type[Image.Image], Type[np.ndar
             return np.array(data)
         else:
             return Image.fromarray(data)
-
-
 
 
 def mat_loader(path: str, **kwargs) -> np.ndarray:
@@ -235,7 +234,6 @@ def save_model(model: nn.Module,
                model_state_dict: Optional[Dict] = None,
                optimizer_state_dict: Optional[Dict] = None
                ):
-
     if not model_state_dict and optimizer_state_dict:
         model_state_dict = model.state_dict()
         optimizer_state_dict = optimizer.state_dict()
@@ -267,8 +265,30 @@ def save_model(model: nn.Module,
     torch.save(state, full_path)
 
 
-def load_yaml_as_dotmap(yaml_path: str) -> DotMap:
+def remove_from_dataname(names: List[str]):
+    new_list = []
 
+    for name in names:
+        new_list.append(name.rpartition('_')[0].rpartition('_')[0])
+
+    return new_list
+
+
+def remove_from_dataname_extended(names: List[str], samples: List[List[str]]):
+    new_list = []
+    samples = [string for sublist in samples for string in sublist]
+
+    for name in names:
+        index = [i for i, s in enumerate(samples) if s in name]
+        if len(index) > 1:
+            raise ValueError('Found more than one positions where the same name is contained')
+
+        new_list.append(samples[index[0]])
+
+    return new_list
+
+
+def load_yaml_as_dotmap(yaml_path: str) -> DotMap:
     with open(yaml_path) as f:
         config = yaml.safe_load(f)
 
@@ -276,15 +296,42 @@ def load_yaml_as_dotmap(yaml_path: str) -> DotMap:
 
     return config
 
-"""
+
+class EarlyStopper:
+    def __init__(self, patience=1, min_delta=0, increasing=False):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = np.inf
+
+    def early_stop(self, validation_loss):
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
+
+
 if __name__ == '__main__':
-    list_ = ['1', '2', '3', '4']
-    image_info_list = ['RowSplit', 'ColumnSplit', 'ImagesAfterSplit', 'RowOverlap', 'ColOverlap']
-    type_list = [list, list, None, None, None]
-    split_info = CustomOrderedDict.fromkeys(list_, CustomOrderedDict.fromkeys(image_info_list, type_list))
+    sample_list_ = [['MAD6400_2008-07-02_arcd_60@vhf_400749', 'MAD6400_2009-06-10_arcd_60@vhf_422844'],
+                    ['MAD6400_2008-06-30_manda_60@vhf_060693', 'MAD6400_2009-07-14_manda_60@vhf_684778',
+                     'MAD6400_2009-07-16_manda_60@vhf_655441', 'MAD6400_2009-07-17_manda_60@vhf_633279',
+                     'MAD6400_2009-07-30_manda_60@vhf_779294', 'MAD6400_2010-07-07_manda_60@vhf_576698',
+                     'MAD6400_2010-07-08_manda_59', 'MAD6400_2010-07-09_manda_60@vhf_470083'],
+                    ['MAD6400_2015-08-10_manda_59', 'MAD6400_2015-08-12_manda_59',
+                     'MAD6400_2015-08-13_manda_59', 'MAD6400_2015-08-20_manda_59'],
+                    ['MAD6400_2011-06-01_manda_59', 'MAD6400_2011-06-08_manda_59',
+                     'MAD6400_2011-06-09_manda_59', 'MAD6400_2014-07-01_manda_48@vhf_178333']]
 
-    split_info['1']['RowSplit'].append(1)
-    print(split_info)
+    info_list = ['MAD6400_2008-07-02_arcd_60@vhf_400749_1', 'MAD6400_2009-06-10_arcd_60@vhf_422844_1',
+                 'MAD6400_2014-07-01_manda_48@vhf_178333_1']
 
-    print(split_info['1']['RowSplit'] is split_info['2']['RowSplit'])
-"""
+    info_list = remove_from_dataname_extended(info_list, sample_list_)
+    print(info_list)
+
+    new_sample_list = [[subelt for subelt in elt if subelt in info_list] for elt in sample_list_]
+    new_sample_list = [x for x in new_sample_list if x != []]
+    print(new_sample_list)

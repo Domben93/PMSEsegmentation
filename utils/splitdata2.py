@@ -3,7 +3,7 @@ import os
 import random
 import warnings
 from .utils import *
-from typing import Tuple, Union, Dict, Any, NoReturn
+from typing import Tuple, Union, Dict, Any, NoReturn, List
 import numpy as np
 from tqdm import tqdm
 from numpy import ndarray
@@ -377,7 +377,7 @@ class StratifiedSegDataSplit:
             raise FileNotFoundError(f'Could not find: {self.label_dir}')
 
         if self.split > 1:
-            raise ValueError(f'Train split must be below 1.0. Got {self.train_split}.')
+            raise ValueError(f'Train split must be equal or below 1.0. Got {self.train_split}.')
 
         self.split_info = self._split()
 
@@ -430,7 +430,7 @@ class StratifiedSegDataSplit:
         return split_info
 
     def save(self, save_dir,
-             specific: str = 'train',
+             specific: Union[List[str], str] = 'train',
              img_transforms=None,
              mask_transforms=None) -> NoReturn:
 
@@ -544,4 +544,4 @@ if __name__ == '__main__':
     path_label = '../dataset/Complete/label'
 
     strat_splitter = StratifiedSegDataSplit(image_dir=path_data, label_dir=path_label)
-    strat_splitter.save('../dataset', 'all', )
+    strat_splitter.save('../Test/partial_conv/data', 'all')

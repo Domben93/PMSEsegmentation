@@ -14,7 +14,7 @@ from torch.nn.functional import pad
 from scipy.interpolate import griddata
 from skimage.restoration import inpaint
 from skimage import measure
-
+from partial_conv.src.model import PConvUNet
 
 __all__ = [
     "Compose",
@@ -30,8 +30,13 @@ __all__ = [
     "Transpose",
     "RandomHorizontalFlip",
     "RandomVerticalFlip",
+    "RandomResize",
+    "RandomRotation",
     "Crop",
-    'ObjectAugmentation'
+    'FunctionalTransform',
+    'RandomContrastAdjust',
+    'RandomBrightnessAdjust',
+    'RandomPositionShift'
 ]
 
 
@@ -203,8 +208,9 @@ class QuasiResize(Transform):
     by a chosen padding-mode such that it fits the wanted output size. In case of odd number of padding instances
     the top and right will be padded with one extra value in order to achieve the wanted output size
     """
+    PADDING_MODE = Literal['constant', 'reflect', 'replicate', 'circular', None]
 
-    def __init__(self, size: List[int], max_scaling: int, padding_mode: str = None, value: int = 0,
+    def __init__(self, size: List[int], max_scaling: int, padding_mode: PADDING_MODE = None, value: int = 0,
                  interpolation: Optional[f.InterpolationMode] = f.InterpolationMode.NEAREST):
         """
 
@@ -226,6 +232,7 @@ class QuasiResize(Transform):
         self.padding = padding_mode
         self.scale = max_scaling
         self.interpolation = interpolation
+
         if self.padding is None:
             self.padding = 'constant'
 
@@ -289,6 +296,30 @@ class UndoQuasiResize:
         h, w = image.shape[-2], image.shape[-1]
         o_h, o_w = original_size[-2], original_size[-1]
 
+        if o_h * self.scale < h:
+            h_multiplier = self.scale
+        else:
+            h_multiplier = 1
+
+        if o_w * self.scale < w:
+            w_multiplier = self.scale
+        else:
+            w_multiplier = 1
+
+        left = math.ceil((w - (o_w * w_multiplier)) / 2)
+        top = math.ceil((h - (o_h * h_multiplier)) / 2)
+
+        image = f.crop(image, top=top,
+                       left=left,
+                       height=o_h * h_multiplier,
+                       width=o_w * w_multiplier)
+
+        if len(image.shape) == 2:
+            image = image.view(1, image.shape[-2], image.shape[-1])
+
+        image = f.resize(image, [o_h, o_w], self.interpolation)
+
+        """
         if h == w:
             actual_scale = 0
             for i in range(1, self.scale + 1):
@@ -305,10 +336,10 @@ class UndoQuasiResize:
             actual_w_scale = 0
 
             for i in range(1, self.scale + 1):
-                if o_h * (i + 1) > h:
+                if o_h * (i + 1) >= h:
                     actual_h_scale = i
 
-                if o_w * (i + 1) > w:
+                if o_w * (i + 1) >= w:
                     actual_w_scale = i
 
                 if actual_h_scale != 0 and actual_w_scale != 0:
@@ -319,9 +350,9 @@ class UndoQuasiResize:
 
             image = image[::, math.ceil(image_h_padding):-math.floor(image_h_padding),
                     math.ceil(image_w_padding):-math.floor(image_w_padding)]
-
+        
         image = f.resize(image, [o_h, o_w], self.interpolation)
-
+        """
         return image
 
 
@@ -483,22 +514,21 @@ class Crop(FunctionalTransform):
 
 class RandomResize(FunctionalTransform):
 
-    def __init__(self, p, scale: Sequence, small_size_scaler: bool = True):
+    def __init__(self, p, scale: Sequence):
         super(RandomResize, self).__init__()
         if 0 >= p >= 1:
             raise ValueError(f'Probability must be between 0.0 and 1.0. Got {p}')
         self.p = p
         self.scale = scale
-        self.small_scaler = small_size_scaler
 
     def __call__(self, image: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
 
         if torch.rand(1) < self.p:
             if len(self.scale) == 2:
-                scale_h = random.uniform(self.scale[0], self.scale[1])
-                scale_w = random.uniform(self.scale[0], self.scale[1])
+                scale_h = random.randint(self.scale[0], self.scale[1])
+                scale_w = random.randint(self.scale[0], self.scale[1])
 
-            elif isinstance(self.scale, Sequence):
+            elif len(self.scale) > 2:
 
                 scale_h = random.choice(self.scale)
                 scale_w = random.choice(self.scale)
@@ -506,51 +536,113 @@ class RandomResize(FunctionalTransform):
             else:
                 raise TypeError(f'Expected Sequence of numbers that can be chosen from. '
                                 f'Got {type(self.scale)}')
-            """
-            h, w = image.shape[0:2]
-            TODO: implement such that small pixel objects are scaled by a different value
-            if self.small_scaler:
-                if h < self.small_scaler:
-                    scale_h = (scale_h * ratio) / h
-    
-    
-                if w < self.small_scaler:
-                    scale_w = (scale_w * ratio) / w
-            """
 
-            h, w = int(image.shape[0] * scale_h), int(image.shape[1] * scale_w)
+
+            h, w = int(image.shape[-2] + scale_h), int(image.shape[-1] + scale_w)
+
+            if h <= 0:
+                h = 1
+            if w <= 0:
+                w = 1
 
             image = f.resize(image, size=[h, w], interpolation=f.InterpolationMode.NEAREST)
-            mask = f.resize(mask, size=[h, w], interpolation=f.InterpolationMode.NEAREST)
+            mask = f.resize(mask.view(1, mask.shape[-2], mask.shape[-1]), size=[h, w], interpolation=f.InterpolationMode.NEAREST)
 
         return image, mask
 
 
 class RandomRotation(FunctionalTransform):
 
-    def __init__(self, rotation_limit: Union[Sequence, int], p: float = 0.5):
+    def __init__(self, rotation_limit: Union[Union[Tuple, List], int],
+                 p: float = 0.5,
+                 rotation_as_max_pixel_shift: bool = False):
         super(RandomRotation, self).__init__()
         if 0 >= p >= 1:
             raise ValueError(f'Probability must be between 0.0 and 1.0. Got {p}')
         self.p = p
         self.rotation_lim = rotation_limit
+        self.max_pixel_shift = rotation_as_max_pixel_shift
 
     def __call__(self, image: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
         if torch.rand(1) < self.p:
-            if isinstance(self.rotation_lim, int):
-                angle = random.randrange(- self.rotation_lim, self.rotation_lim)
+            rotation = self.rotation_lim
+            if self.max_pixel_shift:
+                if isinstance(self.rotation_lim, (int, float)):
 
-            elif isinstance(self.rotation_lim, Sequence):
-                angle = random.choice(self.rotation_lim)
+                    if (image.shape[-1] // 2) < self.rotation_lim:
+                        rotation = 90
+                    else:
+                        rotation = np.rad2deg(np.arcsin(self.rotation_lim / (image.shape[-1] / 2)))
+
+                elif isinstance(self.rotation_lim, (Tuple, List)):
+                    for i in range(len(self.rotation_lim)):
+                        if (image.shape[-1] / 2) > self.rotation_lim[i]:
+                            rotation[i] = np.rad2deg(np.arcsin(self.rotation_lim[i] / (image.shape[-1] / 2)))
+                        else:
+                            rotation[i] = 90
+
+            if isinstance(self.rotation_lim, (int, float)):
+                angle = random.uniform(- rotation, rotation)
+
+            elif isinstance(self.rotation_lim, (Tuple, List)):
+                angle = random.choice(rotation)
 
             else:
                 raise TypeError(f'Expected angle as +- int or a Sequence of numbers that can be chosen from. '
                                 f'Got {type(self.rotation_lim)}')
 
-            image = f.rotate(image.view(1, image.shape[-2], [image.shape[-1]]), angle)
-            mask = f.rotate(image.view(1, image.shape[-2], [image.shape[-1]]), angle)
+            image = f.rotate(image, angle, expand=True)
+            mask = f.rotate(mask.unsqueeze(0), angle, expand=True).squeeze()
 
         return image, mask
+
+
+class RandomPositionShift(FunctionalTransform):
+
+    def __init__(self, p=0.5, max_shift_h: int = 3, max_shift_w: int = 5):
+        super(RandomPositionShift, self).__init__()
+        self.p = p
+        self.max_shift_h = max_shift_h
+        self.max_shift_w = max_shift_w
+
+    def __call__(self, image: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
+
+        h, w = image.shape[-2:]
+
+        if torch.rand(1) < self.p:
+
+            h_shift = random.randint(1, self.max_shift_h)
+            w_shift = random.randint(1, self.max_shift_w)
+
+            shifted_img = torch.zeros((image.shape[-3], image.shape[-2] + h_shift, image.shape[-1] + w_shift))
+            shifted_mask = torch.zeros((image.shape[-3], image.shape[-2] + h_shift, image.shape[-1] + w_shift))
+
+            if torch.rand(1) > 0.5:
+                h_shift = - h_shift
+            if torch.rand(1) > 0.5:
+                w_shift = - w_shift
+
+            if h_shift > 0:
+                h_start = h_shift
+                h_end = shifted_img.shape[-2]
+            else:
+                h_start = 0
+                h_end = shifted_img.shape[-2] + h_shift
+
+            if w_shift > 0:
+                w_start = w_shift
+                w_end = shifted_img.shape[-1]
+            else:
+                w_start = 0
+                w_end = shifted_img.shape[-1] + w_shift
+
+            shifted_img[:, h_start:h_end, w_start:w_end] = image
+            shifted_mask[:, h_start:h_end, w_start:w_end] = mask
+
+            return shifted_img, shifted_mask
+
+        else:
+            return image, mask
 
 
 class RandomBrightnessAdjust(FunctionalTransform):
@@ -562,7 +654,8 @@ class RandomBrightnessAdjust(FunctionalTransform):
         if any(brightness_range) < 0:
             raise ValueError(f'brightness_range values must be non-negative. Got {brightness_range}')
         if brightness_range[0] > brightness_range[1]:
-            raise ValueError(f'Brightness value at index 0 must be smaller than that of index 1. Got {brightness_range}')
+            raise ValueError(
+                f'Brightness value at index 0 must be smaller than that of index 1. Got {brightness_range}')
         self.p = p
         self.brightness = brightness_range
 
@@ -596,95 +689,19 @@ class RandomContrastAdjust(FunctionalTransform):
         return image, mask
 
 
-class ObjectAugmentation(FunctionalTransform):
+class RandomEqualize(FunctionalTransform):
 
-    def __init__(self, augmentation_methods: List[FunctionalTransform],
-                 ):
-        super(ObjectAugmentation, self).__init__()
+    def __init__(self, p=0.5):
+        super(RandomEqualize, self).__init__()
+        self.p = p
+        self.equalize = f.equalize
 
-        self.tranforms = augmentation_methods
+    def __call__(self, image: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
+        if torch.rand(1) < self.p:
+            image = self.equalize(image.contiguous())
 
-    @staticmethod
-    def _image_parsing(image: Tensor, mask: Tensor) -> Tensor:
+        return image, mask
 
-        parsed = torch.where(mask == 1, 0, image)
-        return parsed
-
-    def _background_inpainting(self, parsed_image: Tensor) -> Tensor:
-
-        defect_image = np.array(parsed_image[0, :, :])
-        mask = torch.where(parsed_image[0, :, :] == 0, 1, 0)
-
-        mask = self.__mask_padding(mask, 3)
-
-        inpainted = inpaint.inpaint_biharmonic(defect_image, mask.numpy(), channel_axis=None)
-
-        """
-        only_inpainted = np.where(mask == 1, inpainted, np.nan) 
-        min_, max_ = np.nanmin(only_inpainted), np.nanmax(only_inpainted)
-        inpainted_indx = np.where(mask == 1)
-        for x, y in zip(inpainted_indx[0], inpainted_indx[1]):
-
-            inpainted[x, y] = random.uniform(float(min_), float(max_))
-        """
-        inpainted = torch.from_numpy(np.expand_dims(inpainted, axis=0))
-        inpainted = torch.stack((inpainted, inpainted, inpainted), dim=1).squeeze()
-
-        return inpainted
-
-    def _object_augmentation(self, obj_image, obj_mask) -> Tuple[Tensor, Tensor]:
-
-        for transform in self.tranforms:
-            obj_image, obj_mask = transform(obj_image, obj_mask)
-
-        return obj_image, obj_mask
-
-    def __call__(self, image: Tensor, mask: Tensor):
-
-        new_mask = torch.zeros(mask.shape)
-
-        image1 = self._image_parsing(image, mask)
-        inpainted_image = self._background_inpainting(image1) * 255
-        inpainted_image_orig = inpainted_image.clone().detach()
-
-        img_mask, island_count = measure.label(mask.numpy()[0, :, :], background=0, return_num=True, connectivity=1)
-
-        for i in range(island_count - 1):
-
-            pixel_island = torch.where(torch.from_numpy(img_mask) == i + 1)
-
-            x, y = torch.min(pixel_island[0]), torch.min(pixel_island[1])
-            x2, y2 = torch.max(pixel_island[0]) + 1, torch.max(pixel_island[1]) + 1
-
-            im, msk = self._object_augmentation(image[:, x:x2, y:y2], mask[0, x:x2, y:y2])
-
-            inpainted_image[:, x:x2, y:y2] = torch.where(msk[:, :] == 1, im[:, :, :], inpainted_image[:, x:x2, y:y2])
-            new_mask[:, x:x2, y:y2] = msk[:, :]
-        """
-        fig, ax = plt.subplots(6, 1)
-        min, max = torch.min(image[:, :, 0]), torch.max(image[:, :, 0])
-
-        ax[0].imshow(image[0, :, :], cmap='jet', vmin=min, vmax=max, label='Original Image')
-        ax[1].imshow(image1[0, :, :], cmap='jet', vmin=min, vmax=max, label='Parsed image')
-        ax[2].imshow(inpainted_image_orig[0, :, :], cmap='jet', vmin=min, vmax=max, label='Inpainted')
-        ax[3].imshow(mask[0, :, :], cmap='jet', label='Original mask', vmin=0, vmax=1)
-
-        ax[4].imshow(inpainted_image[0, :, :], cmap='jet', vmin=min, vmax=max, label='Assemble Image')
-        ax[5].imshow(new_mask[0, :, :], cmap='jet', vmin=0, vmax=1, label='Assemble Mask')
-        plt.show()
-        """
-
-        return inpainted_image, new_mask
-
-    def __mask_padding(self, mask, value: int = 1) -> Tensor:
-        mask_copy = torch.zeros(mask.shape)
-
-        for x in range(mask.shape[0]):
-            for y in range(mask.shape[1]):
-                if mask[x, y] == 1:
-                    mask_copy[max(x - value, 0):min(mask.shape[0], value + x),
-                              max(y - value, 0):min(mask.shape[1], value + y)] = 1
-        return mask_copy
 
 
 if __name__ == '__main__':
@@ -693,33 +710,56 @@ if __name__ == '__main__':
     from torchmetrics.functional.classification import binary_jaccard_index
 
     torch.manual_seed(42)
-    im_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\data\\MAD6400_2015-08-12_manda_59_94_235.png'
-    msk_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\label\\MAD6400_2015-08-12_manda_59_94_235.png'
+    im_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\data\\MAD6400_2008-07-02_arcd_60@vhf_400749_38_95.png'
+    msk_path = 'C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Train\\label\\MAD6400_2008-07-02_arcd_60@vhf_400749_38_95.png'
 
-    resize = QuasiResize([64, 64], 2)
-    un_resize = UndoQuasiResize(resize)
+    resize_const = QuasiResize([64, 64], 2, padding_mode='constant')
+    resize_ref = QuasiResize([64, 64], 2, padding_mode='reflect')
+    resize_rep = QuasiResize([64, 64], 2, padding_mode='replicate')
+
+    un_resize = UndoQuasiResize(resize_const)
     norm = Normalize((0, 1), (0, 255), return_type=torch.float32)
     float32 = ConvertDtype(torch.float32)
 
-    im = torch.from_numpy(np.array(imread(im_path)).transpose((2, 0, 1)))
-    msk = torch.from_numpy(np.array(imread(msk_path)).transpose((2, 0, 1)))
-    transform = RandomContrastAdjust(0.99, (1.1, 1.1))
+    im = torch.from_numpy(np.array(imread(im_path)).transpose((2, 0, 1)))[:, :, :22].to(torch.float32)
+    msk = torch.from_numpy(np.array(imread(msk_path)).transpose((2, 0, 1)))[:, :, :22].to(torch.float32)
+    print(im.shape)
+    transform = RandomContrastAdjust(1, (1.1, 1.1))
 
+    fig, ax = plt.subplots(4, 2)
+
+    ax[0, 0].imshow(im[0, :, :], cmap='jet', vmin=0, vmax=255)
+    ax[0, 1].imshow(msk[0, :, :], cmap='jet', vmin=0, vmax=1)
+
+    ax[1, 0].imshow(resize_const(im)[0, :, :], cmap='jet', vmin=0, vmax=255)
+    ax[1, 1].imshow(resize_const(msk)[0, :, :], cmap='jet', vmin=0, vmax=1)
+
+    ax[2, 0].imshow(resize_ref(im)[0, :, :], cmap='jet', vmin=0, vmax=255)
+    ax[2, 1].imshow(resize_ref(msk)[0, :, :], cmap='jet', vmin=0, vmax=1)
+
+    ax[3, 0].imshow(resize_rep(im)[0, :, :], cmap='jet', vmin=0, vmax=255)
+    ax[3, 1].imshow(resize_rep(msk)[0, :, :], cmap='jet', vmin=0, vmax=1)
+
+    plt.show()
+
+
+    """
     im1 = norm(im)
     msk = float32(msk)
 
     im1 = torch.stack((resize(im1[:, :, 0:58]), resize(im1[:, :, 58:58*2]))).cuda()
     msk1 = torch.stack((resize(msk[:, :, 0:58]), resize(msk[:, :, 58:58*2]))).cuda()
 
-    im, _ = transform(im, msk)
+    im, msk = transform(im, msk)
+
     im = norm(im)
     msk = float32(msk)
 
     im2 = torch.stack((resize(im[:, :, 0:58]), resize(im[:, :, 58:116]))).cuda()
     msk2 = torch.stack((resize(msk[:, :, 0:58]), resize(msk[:, :, 58:116]))).cuda()
-
+    
     model = UNet().cuda()
-    pre_trained = torch.load('C:\\Users\\dombe\\PycharmProjects\\Test\\weights\\UNet_Train_pretrained_freezeNone_DICE_adam.pt')
+    pre_trained = torch.load('C:\\Users\\dombe\\PycharmProjects\\Test\\weights\\Unet_32_pretrain-True_loss-BinaryDiceLoss_optim-adam\\lr_0.001_wd_0.1_betas_0.8-0.999_momentum_0.9_freezed-0_0.pt')
     model.init_weights(pre_trained['model_state'])
 
     model.eval()
@@ -762,7 +802,7 @@ if __name__ == '__main__':
 
 
 
-
+    """
     """
     #bright_adjust = RandomBrightnessAdjust(0.99, (1.2, 1.2))
     contrast_adjust = RandomContrastAdjust(0.99, (0.7, 0.7))
@@ -799,4 +839,3 @@ if __name__ == '__main__':
     print(im)
     plt.show()
     """
-

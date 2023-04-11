@@ -64,22 +64,9 @@ class PmseDataAnalysis:
 
     def __init__(self,
                  data_path: str,
-                 label_path: str,
-                 data_split_overlap: float):
-        self._data = PMSE_Dataset(data_path, label_path, transform=t.ToTensor(), disable_warnings=True)
-        self._full_dataloader = DataLoader(self._data, batch_size=1)
-        self.mean, self.std = dataset_mean_and_std(self._full_dataloader)
-
-        self._min = -self.std * 3
-        self._max = self.std * 3
-        self._vmin, self._vmax = 0, 1
-
-        self.data_split = data_split_overlap
+                 label_path: str):
 
         pair_compose = t.PairCompose([
-            [t.Standardize(mean=self.mean, std=self.std), t.MaskClassReduction([0, 1, 2, 3], [0, 1], 0)],
-            [t.Normalize((0, 255), (self._min, self._max)), None],
-            [t.ToTensor(), t.ToTensor(zero_one_range=False)],
             [t.QuasiResize(size=[64, 64], max_scaling=2, padding_mode='constant'),
              t.QuasiResize(size=[64, 64], max_scaling=2, padding_mode='constant')],
             [t.ToGrayscale(output_channels=3), None],
@@ -89,7 +76,9 @@ class PmseDataAnalysis:
         self._data = PMSE_Dataset(data_path, label_path,
                                   transform=pair_compose,
                                   square_split=True,
-                                  percent_overlap=self.data_split)
+                                  percent_overlap=.0,
+                                  last_min_overlap=0,
+                                  lock_vertical=True)
 
         self._dataloader = DataLoader(self._data, batch_size=len(self._data))
 
@@ -118,7 +107,7 @@ class PmseDataAnalysis:
         return t_sne
 
     def last_layer_vectors(self, model: models.base_model.BaseModel, weights) -> ndarray:
-        model.init_weights(weights)
+        model.load_state_dict(weights)
         device = torch.device("cuda")
         model.to(device)
 
@@ -153,47 +142,66 @@ class EmptyActivation(nn.Module):
 
 if __name__ == '__main__':
 
-    pair_compose = t.PairCompose([
-        [t.ToTensor(), t.ToTensor(zero_one_range=False)],
-        [t.QuasiResize(size=[64, 64], max_scaling=2, padding_mode='constant'),
-         t.QuasiResize(size=[64, 64], max_scaling=2, padding_mode='constant')],
-        [t.ToGrayscale(output_channels=3), None],
-        [t.ConvertDtype(torch.float32), t.ConvertDtype(torch.float32)]
-    ])
+    config_path = 'models\\options\\unet_config.ymal'
 
-    pmse_small = PMSE_Dataset(Settings.SmallSamples.DATA,
-                              Settings.SmallSamples.MASKS,
-                              transform=t.ToTensor(),
-                              disable_warnings=True,
-                              square_split=True,
-                              percent_overlap=.0)
+    config = load_yaml_as_dotmap(config_path)
 
-    pmse_inter = PMSE_Dataset(Settings.IntermediateSamples.DATA,
-                              Settings.IntermediateSamples.MASKS,
-                              transform=t.ToTensor(),
-                              disable_warnings=True,
-                              square_split=True,
-                              percent_overlap=.0)
+    train = PmseDataAnalysis(os.path.join(config.dataset.path_train, 'data'),
+                               os.path.join(config.dataset.path_train, 'label'))
 
-    pmse_big = PMSE_Dataset(Settings.BigSamples.DATA,
-                              Settings.BigSamples.MASKS,
-                              transform=pair_compose,
-                              disable_warnings=True,
-                              square_split=True,
-                              percent_overlap=.0)
-    im_num = 0
-    old_info = 0
-    print(f'num small data: {len(pmse_small)}')
-    print(f'num inter data: {len(pmse_inter)}')
-    print(f'num big data: {len(pmse_big)}')
+    val = PmseDataAnalysis(os.path.join(config.dataset.path_validate, 'data'),
+                               os.path.join(config.dataset.path_validate, 'label'))
 
-    print(pmse_big[0][2]['split_info'][1][1])
+    test = PmseDataAnalysis(os.path.join(config.dataset.path_test, 'data'),
+                               os.path.join(config.dataset.path_test, 'label'))
 
-    # for i in range(len(pmse_data)):
-    #    img, _, info = pmse_data[i]
-    #    if info['image_name']
+    unet = UNet(3, 1, 32, activation_func=EmptyActivation)
 
-    #    old_info = info
+    vector_data_train = train.last_layer_vectors(unet,
+                                                   torch.load(
+                                                       'weights/lr_0.008_wd_0.005_betas_0.9-0.999_momentum_0.9_freezed-None_0.pt')
+                                                   ['model_state'])
+
+    vector_data_val = val.last_layer_vectors(unet,
+                                           torch.load(
+                                               'weights/lr_0.008_wd_0.005_betas_0.9-0.999_momentum_0.9_freezed-None_0.pt')
+                                           ['model_state'])
+    vector_data_test = test.last_layer_vectors(unet,
+                                           torch.load(
+                                               'weights/lr_0.008_wd_0.005_betas_0.9-0.999_momentum_0.9_freezed-None_0.pt')
+                                           ['model_state'])
+
+    pca_train = train.PCA_datareduction(vector_data_test, 50)#train.TSNE(train.PCA_datareduction(train.im_squeezed, 50), 2, perplexity=5)
+    pca_val = val.PCA_datareduction(vector_data_val, 50)
+    pca_test = test.PCA_datareduction(vector_data_test, 50)
+
+    numbers_train = generate_names(train.data_info)
+    numbers_val = generate_names(val.data_info)
+    numbers_test = generate_names(test.data_info)
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    for n, (i, j) in enumerate(zip(pca_train[:, 0], pca_train[:, 1])):
+
+        ax.scatter(i, j, color='red')
+        ax.annotate(numbers_train[n], xy=(i, j), color='black',
+                    fontsize="large", weight='heavy',
+                    horizontalalignment='center')
+
+    for n, (i, j) in enumerate(zip(pca_val[:, 0], pca_val[:, 1])):
+
+        ax.scatter(i, j, color='blue')
+        ax.annotate(numbers_val[n], xy=(i, j), color='black',
+                    fontsize="large", weight='heavy',
+                    horizontalalignment='center')
+
+    for n, (i, j) in enumerate(zip(pca_test[:, 0], pca_test[:, 1])):
+        ax.scatter(i, j, color='green')
+        ax.annotate(numbers_test[n], xy=(i, j), color='black',
+                    fontsize="large", weight='heavy',
+                    horizontalalignment='center')
+
+    plt.show()
     """
     data_loader = DataLoader(pmse_train_data, batch_size=1)
 

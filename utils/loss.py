@@ -1,48 +1,24 @@
+from functools import partial
+from operator import itemgetter
+from typing import Tuple, Union, List, Callable
+
+import numpy as np
 import torch
 import torch.nn as nn
-from torch import Tensor
+from PIL import Image
+from torch import Tensor, einsum
 from torch.nn import functional as F
 from torchmetrics import Dice
+from torchvision import transforms
+from scipy.ndimage import distance_transform_edt as eucl_distance
 
-def dice_loss(true, logits, eps=1e-7):
-    """Computes the Sørensen–Dice loss.
-    Note that PyTorch optimizers minimize a loss. In this
-    case, we would like to maximize the dice loss so we
-    return the negated dice loss.
-    Args:
-        true: a tensor of shape [B, 1, H, W].
-        logits: a tensor of shape [B, C, H, W]. Corresponds to
-            the raw output or logits of the model.
-        eps: added to the denominator for numerical stability.
-    Returns:
-        dice_loss: the Sørensen–Dice loss.
-    """
-    num_classes = logits.shape[1]
-    if num_classes == 1:
-        true_1_hot = torch.eye(num_classes + 1)[true.squeeze(1)]
-        true_1_hot = true_1_hot.permute(0, 3, 1, 2).float()
-        true_1_hot_f = true_1_hot[:, 0:1, :, :]
-        true_1_hot_s = true_1_hot[:, 1:2, :, :]
-        true_1_hot = torch.cat([true_1_hot_s, true_1_hot_f], dim=1)
-        pos_prob = torch.sigmoid(logits)
-        neg_prob = 1 - pos_prob
-        probas = torch.cat([pos_prob, neg_prob], dim=1)
-    else:
-        true_1_hot = torch.eye(num_classes)[true.squeeze(1)]
-        true_1_hot = true_1_hot.permute(0, 3, 1, 2).float()
-        probas = F.softmax(logits, dim=1)
-    true_1_hot = true_1_hot.type(logits.type())
-    dims = (0,) + tuple(range(2, true.ndimension()))
-    intersection = torch.sum(probas * true_1_hot, dims)
-    cardinality = torch.sum(probas + true_1_hot, dims)
-    dice_loss = (2. * intersection / (cardinality + eps)).mean()
-    return (1 - dice_loss)
+D = Union[Image.Image, np.ndarray, Tensor]
 
 
 class BinaryDiceLoss(nn.Module):
-    
+
     def __init__(self,
-                 threshold: float = 0.5,
+                 threshold: float = None,
                  eps: float = 1e-7,
                  reduction: str = 'mean'):
         super(BinaryDiceLoss, self).__init__()
@@ -59,24 +35,39 @@ class BinaryDiceLoss(nn.Module):
             raise ValueError(f'Predicted and target Tensor must have shape [N, 1, H, W]. Got predicted: {predict.shape}'
                              f' and target: {target.shape}')
 
-        #pred = torch.where(predict >= 0.5, 1, 0)
-        #pred = predict.view(predict.shape[0], -1)
-        #targ = target.view(target.shape[0], -1)
+        predict = predict.view(predict.shape[0], -1)
+        target = target.view(target.shape[0], -1)
 
-        #intersect = torch.sum(torch.mul(pred, targ), dim=1) + self.eps
+        intersection = (predict * target).sum(dim=1)
 
-        #numerator = (2. * intersect)
-        #denominator = torch.sum(pred, dim=1) + torch.sum(targ, dim=1) + intersect
-        #self.dice.update(predict, targ)
-        #return (1 - (numerator / (denominator + self.eps))).mean()
+        dice = (2.0 * intersection + self.eps) / (target.sum(dim=1) + predict.sum(dim=1) + self.eps)
 
-        predict = predict.view(-1)
-        target = target.view(-1)
+        return (1 - dice).mean()
 
-        intersection = (predict * target).sum()
-        dice = (2.0 * intersection + self.eps) / (target.sum() + predict.sum() + self.eps)
 
-        return 1 - dice
+class GeneralizedDiceLoss(nn.Module):
+
+    def __init__(self, eps: float = 1e-10):
+        super(GeneralizedDiceLoss, self).__init__()
+        self.eps = eps
+
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+
+        pred = pred.view(pred.shape[0], -1)
+        target = target.view(target.shape[0], -1)
+
+        w_f = 1 / ((torch.sum(target, dim=1) + self.eps)**2)
+        w_b = 1 / ((torch.sum(1 - target, dim=1) + self.eps)**2)
+
+        fg_intersect = (w_f * (pred * target).sum(dim=1))
+        fb_intersect = (w_b * ((1 - pred) * (1 - target)).sum(dim=1))
+
+        fg_tot = (w_f * (pred + target).sum(dim=1))
+        fb_tot = (w_b * (2 - pred - target).sum(dim=1))
+
+        gdl = 1 - (2 * ((fg_intersect + fb_intersect + self.eps) / (fg_tot + fb_tot + self.eps)))
+
+        return gdl.mean()
 
 
 # https://www.kaggle.com/code/bigironsphere/loss-function-library-keras-pytorch/notebook
@@ -89,16 +80,15 @@ class FocalLoss(nn.Module):
         self.output = output
 
     def forward(self, predicted: Tensor, label: Tensor) -> Tensor:
-
         predicted = predicted.view(-1)
         label = label.view(-1)
 
         bce = F.binary_cross_entropy(predicted, label, reduction=self.output)
 
         bce_exp = torch.exp(-bce)
-        focal_loss = self.alpha * (1 - bce_exp)**self.gamma * bce
+        focal_loss = self.alpha * (1 - bce_exp) ** self.gamma * bce
 
-        return focal_loss
+        return focal_loss.mean()
 
 
 class LogCoshDiceLoss(nn.Module):
@@ -108,7 +98,6 @@ class LogCoshDiceLoss(nn.Module):
         self.dice = BinaryDiceLoss(threshold=threshold, eps=eps)
 
     def forward(self, predicted: Tensor, label: Tensor) -> Tensor:
-
         loss = torch.log(torch.cosh(self.dice(predicted, label)))
 
         return loss
@@ -159,54 +148,298 @@ class WeightedSoftDiceLoss(nn.Module):
         return (1 - LWDice).mean()
 
 
-class DiceCoefficient(nn.Module):
+class DiceBCELoss(nn.Module):
+    def __init__(self, weight=(1, 0.5), size_average=True):
+        super(DiceBCELoss, self).__init__()
+        if weight is None:
+            weight = (1, 1)
+        self.dice_weight = weight[0]
+        self.bce_weight = weight[1]
 
-    def __init__(self, smooth=1):
-        super(DiceCoefficient, self).__init__()
-        self.smooth = smooth
+    def forward(self, inputs, targets, smooth=1):
 
-    def forward(self, pred, label):
-        if pred.shape != label.shape:
-            raise ValueError(f'predicted and label mus have same shape.')
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
 
-        pred = pred.view(pred.shape[0], -1)
-        label = label.view(label.shape[0], -1)
+        intersection = (inputs * targets).sum()
+        dice_loss = 1 - (2. * intersection + smooth) / (inputs.sum() + targets.sum() + smooth)
+        BCE = F.binary_cross_entropy(inputs, targets, reduction='mean')
 
-        intersection = (pred * label).sum(dim=1)
-        union = (pred.sum(dim=1) + label.sum(dim=1))
+        if self.dice_weight and self.bce_weight:
+            Dice_BCE = self.bce_weight * BCE + self.dice_weight * dice_loss
+            return Dice_BCE
+        else:
+            return BCE + dice_loss
 
-        return (2 * intersection + self.smooth) / (union + self.smooth)
+
+class SurfaceLoss(nn.Module):
+
+    def __init__(self, **kwargs):
+        super(SurfaceLoss, self).__init__()
+        self.dist_transform = self.dist_map_transform([1, 1], 1)
+
+    def forward(self, prob: Tensor, label: Tensor):
+
+        f_pc = prob.type(torch.float32).cpu()
+        f_dc = self.dist_transform(label.cpu())
+
+        f_multiplied = einsum("bkwh,bkwh->bkwh", f_pc, f_dc)
+
+        loss = f_multiplied.mean()
+
+        return loss
+
+    @staticmethod
+    def dist_map_transform(resolution: List[float], K: int) -> Callable[[D], Tensor]:
+        return transforms.Compose([
+            SurfaceLoss.gt_transform(resolution, K),
+            lambda t: t.cpu().numpy(),
+            partial(SurfaceLoss.one_hot2dist, resolution=resolution),
+            lambda nd: torch.tensor(nd, dtype=torch.float32)
+        ])
+
+    @staticmethod
+    def gt_transform(resolution: List[float], K: int) -> Callable[[D], Tensor]:
+        return transforms.Compose([
+            lambda img: np.array(img)[...],
+            lambda nd: torch.tensor(nd, dtype=torch.int64)[None, ...],  # Add one dimension to simulate batch
+            # partial(class2one_hot, K=K),
+            itemgetter(0)  # Then pop the element to go back to img shape
+        ])
+
+    @staticmethod
+    def one_hot2dist(seg: np.ndarray, resolution: Tuple[float, float, float] = None,
+                     dtype=None) -> np.ndarray:
+
+        # assert one_hot(torch.tensor(seg), axis=0)
+
+        K: int = len(seg)
+
+        res = np.zeros_like(seg, dtype=dtype)
+        for k in range(K):
+
+            posmask = seg[k].astype(np.bool_)[0, :, :]
+
+            if posmask.any():
+                negmask = ~posmask
+                res[k] = eucl_distance(negmask, sampling=resolution) * negmask \
+                 - (eucl_distance(posmask, sampling=resolution) - 1) * posmask
+
+        return res
+
+
+class DiceSurfaceLoss(nn.Module):
+
+    def __init__(self, alpha=1, max_alpha=0.90, strategy='constant', inc_reb_rate_iter=10):
+        super(DiceSurfaceLoss, self).__init__()
+
+        self.dice = BinaryDiceLoss()
+        self.surface = SurfaceLoss()
+        self.alpha = alpha
+        self.max_alpha = max_alpha
+        self.strategy = strategy
+        if self.strategy not in ['constant', 'increase', 'rebalance']:
+            raise ValueError(f'strategy must be one of the following {["constant", "increase", "rebalance"]}.'
+                             f'Got {self.strategy}')
+
+        if self.strategy in ['rebalance', 'increase']:
+            self.alpha = 0
+        self.iter = 0
+        self.inc_reb_rate = inc_reb_rate_iter
+
+    def forward(self, prob: Tensor, label: Tensor):
+        dice = self.dice(prob, label)
+        surface = self.surface(prob.cpu(), label.cpu())
+
+        if self.strategy == 'constant':
+            loss = dice + self.alpha * surface
+
+        elif self.strategy == 'increase':
+            if self.iter % self.inc_reb_rate == 0:
+                self.alpha += 0.01
+            if self.alpha >= self.max_alpha:
+                self.alpha = self.max_alpha
+            loss = dice + self.alpha * surface
+            self.iter += 1
+        else:
+            if self.iter % self.inc_reb_rate == 0:
+                if self.iter < 100:
+                    self.alpha += 0.005
+                elif 100 <= self.iter <= 300:
+                    self.alpha += 0.01
+                else:
+                    self.alpha += 0.02
+            if self.alpha >= self.max_alpha:
+                self.alpha = self.max_alpha
+            self.iter += 1
+            loss = ((1 - self.alpha) * dice) + (self.alpha * surface)
+
+        return loss
+
+
+class BCE(nn.Module):
+
+    def __init__(self, inverse_weighting: bool = True):
+        super(BCE, self).__init__()
+        self.weighting = inverse_weighting
+        self.bce = torch.nn.BCELoss()
+
+    def forward(self, prob: Tensor, label: Tensor) -> Tensor:
+        return prob
+
+
+class BCESurfaceLoss(nn.Module):
+
+    def __init__(self, alpha=1, max_alpha=1, strategy='constant', inc_reb_rate_iter=10,):
+        super(BCESurfaceLoss, self).__init__()
+
+        self.bce = torch.nn.BCELoss()
+        self.surface = SurfaceLoss()
+        self.alpha = alpha
+        self.max_alpha = max_alpha
+        self.strategy = strategy
+        if self.strategy not in ['constant', 'increase', 'rebalance']:
+            raise ValueError(f'strategy must be one of the following {["constant", "increase", "rebalance"]}.'
+                             f'Got {self.strategy}')
+
+        if self.strategy in ['rebalance', 'increase']:
+            self.alpha = 0
+        self.iter = 0
+        self.inc_reb_rate = inc_reb_rate_iter
+
+    def forward(self, prob: Tensor, label: Tensor):
+        bce = self.bce(prob, label)
+        surface = self.surface(prob.cpu(), label.cpu())
+
+        if self.strategy == 'constant':
+            loss = bce + self.alpha * surface
+
+        elif self.strategy == 'increase':
+            if (self.iter % self.inc_reb_rate == 0) and self.max_alpha > self.alpha:
+                self.alpha += 0.01
+            loss = bce + self.alpha * surface
+            self.iter += 1
+        else:
+            if (self.iter % self.inc_reb_rate == 0) and self.max_alpha > self.alpha:
+                self.alpha += 0.01
+            self.iter += 1
+            loss = (1 - self.alpha) * bce + self.alpha * surface
+
+        return loss
+
+
+class FocalSurfaceLoss(nn.Module):
+
+    def __init__(self, alpha=1, max_alpha=1, strategy='constant', inc_reb_rate_iter=10,):
+        super(FocalSurfaceLoss, self).__init__()
+
+        self.focal = FocalLoss()
+        self.surface = SurfaceLoss()
+        self.alpha = alpha
+        self.max_alpha = max_alpha
+        self.strategy = strategy
+        if self.strategy not in ['constant', 'increase', 'rebalance']:
+            raise ValueError(f'strategy must be one of the following {["constant", "increase", "rebalance"]}.'
+                             f'Got {self.strategy}')
+
+        if self.strategy in ['rebalance', 'increase']:
+            self.alpha = 0
+        self.iter = 0
+        self.inc_reb_rate = inc_reb_rate_iter
+
+    def forward(self, prob: Tensor, label: Tensor):
+        focal = self.focal(prob, label)
+        surface = self.surface(prob.cpu(), label.cpu())
+
+        if self.strategy == 'constant':
+            loss = focal + self.alpha * surface
+
+        elif self.strategy == 'increase':
+            if (self.iter % self.inc_reb_rate == 0) and self.max_alpha > self.alpha:
+                self.alpha += 0.01
+            loss = focal + self.alpha * surface
+            self.iter += 1
+        else:
+            if (self.iter % self.inc_reb_rate == 0) and self.max_alpha > self.alpha:
+                self.alpha += 0.01
+            self.iter += 1
+            loss = (1 - self.alpha) * focal + self.alpha * surface
+
+        return loss
+
+
+class TverskyLoss(nn.Module):
+
+    def __init__(self, alpha=0.8, beta=0.2, eps=1e-5):
+        super(TverskyLoss, self).__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.eps = eps
+
+    def forward(self, predicted: Tensor, label: Tensor) -> Tensor:
+
+        predicted = predicted.view(-1)
+        label = label.view(-1)
+
+        TP = (predicted * label).sum()
+        FP = ((1 - label) * predicted).sum()
+        FN = (label * (1 - predicted)).sum()
+
+        loss = (TP + self.eps) / (TP + self.alpha * FP + self.beta*FN + self.eps)
+
+        return (1 - loss).mean()
+"""
+class SmoothingCrossEntropyLoss(nn.Module):
+
+    def __init__(self, N, epsilon=0.1):
+        super(SmoothingCrossEntropyLoss, self).__init__()
+        self.N = N
+        self.eps = epsilon
+
+    def forward(self, predicted: Tensor, label: Tensor) -> Tensor:
+
+        pass
+
+    def _label_smoothing(self, predicted: Tensor, label: Tensor) -> Tensor:
+
+        smoothed = 
+
+        return smoothed
+"""
 
 
 if __name__ == '__main__':
-
     torch.manual_seed(42)
 
-    label = torch.rand(10, 1, 50, 50)
+    #label = torch.rand(10, 1, 50, 50)
     pred_raw = torch.rand(10, 1, 50, 50)
 
-    label1 = torch.tensor([[[[0, 0, 0, 0, 0],
-          [0, 0, 0, 0, 0],
-          [0, 0, 0, 0, 0],
-          [1, 1, 1, 1, 1],
-          [1, 1, 1, 1, 1]]]])
+    label1 = torch.tensor([[
+        [[0, 0, 0, 0, 0],
+         [0, 0, 0, 0, 0],
+         [0, 0, 0, 0, 0],
+         [1, 1, 1, 1, 1],
+         [1, 1, 1, 1, 1]],
+        [[0, 0, 0, 0, 0],
+         [0, 0, 0, 0, 0],
+         [0, 0, 0, 0, 0],
+         [1, 1, 1, 1, 1],
+         [1, 1, 1, 1, 1]]]])
 
-    pred1 = torch.tensor([[[[0.0100, 0.0300, 0.0200, 0.0200, 0.0300],
-          [0.0900, 0.1200, 0.0700, 0.0700, 0.0500],
-          [0.0900, 0.0700, 0.0800, 0.0500, 0.0200],
-          [0.9900, 0.8500, 0.9800, 0.9700, 0.9500],
-          [0.8900, 0.9700, 0.8800, 0.9500, 0.8800]],
+    pred1 = torch.tensor([[[[0.0001, 0.0300, 0.0200, 0.0200, 0.0300],
+                            [0.0900, 0.1200, 0.0700, 0.0700, 0.0500],
+                            [0.0900, 0.0700, 0.0800, 0.0500, 0.0200],
+                            [0.0900, 0.0500, 0.0800, 0.0700, 0.0500],
+                            [0.8900, 0.9700, 0.8800, 0.9500, 0.8800]],
+                           [[0.0100, 0.0300, 0.0200, 0.0200, 0.0300],
+                            [0.0900, 0.1200, 0.0700, 0.0700, 0.0500],
+                            [0.0900, 0.0700, 0.0800, 0.0500, 0.0200],
+                            [0.0900, 0.0500, 0.0800, 0.0700, 0.0500],
+                            [0.8900, 0.9700, 0.8800, 0.9500, 0.8800]]
                            ]])
+    #label1 = torch.zeros((2, 1, 5, 5))
 
-    loss = WeightedSoftDiceLoss(v1=0.15)
-    dice = DiceCoefficient()
+    label1 = torch.zeros((2, 1, 5, 5))
+    loss = SurfaceLoss(idc=[1])
 
-    label = (label >= .5).float()
-
-    print(loss(pred1, label1))
-    print(dice((pred1 >= .5).float(), label1))
-
-
-
-
-
+    print(loss(pred1.view(2, 1, 5, 5), label1.view(2, 1, 5, 5)))

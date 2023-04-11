@@ -1,35 +1,81 @@
+import os.path
+
 import numpy as np
 import torch
 import torch.nn
 import argparse
-from utils.dataset import PMSE_Dataset, get_dataloader
+from models.utils import load_model
+from utils.dataset import get_dataloader
 from utils import transforms as t
-from torch.utils.data import DataLoader
 from utils.utils import *
-from utils.model_comparison import sde, cev
 from matplotlib import pyplot as plt
-from models import unets
-from config.settings import NetworkSettings as Settings
-from utils import metrics as met
+from utils.metrics import SegMets, sde, cev
+from torchvision.utils import save_image
 
 
-def display(image, label, pred, info, v_min, v_max):
-    if not len(image) == len(label) == len(pred):
+def save_images(images, labels, preds, save_path, names):
+    if not len(images) == len(labels) == len(preds):
         raise ValueError('List of images, labels and predictions must be of equal length')
 
-    fig_list = []
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+        os.mkdir(os.path.join(save_path, 'images'))
+        os.mkdir(os.path.join(save_path, 'labels'))
+        os.mkdir(os.path.join(save_path, 'preds'))
 
-    images = [d['image_name'] for d in info]
-    sizes = [d['split_info'] for d in info]
-    # print(images)
-    # print(sizes)
-    unique_images = np.unique(np.array(images))
+    for info in names:
 
-    total_count = 0
-    for image_name in unique_images:
-        count = images.count(image_name)
+        name_indices = [i for i, j in enumerate(names) if j == info]
 
-        total_count += count
+        if len(name_indices) > 1:
+            im = torch.cat([images[index] for index in name_indices], dim=1)
+            label = torch.cat([labels[index] for index in name_indices], dim=1)
+            pred = torch.cat([preds[index] for index in name_indices], dim=1)
+        else:
+            im = images[name_indices[0]]
+            label = labels[name_indices[0]]
+            pred = preds[name_indices[0]]
+
+        save_image(im, save_path + '/images/' + f'im_{info}' + '.png')
+        save_image(label, save_path + '/labels/' + f'mask_{info}' + '.png')
+        save_image(pred, save_path + '/preds/' + f'label_{info}' + '.png')
+
+
+def display(images, labels, preds, info, sample_classes):
+    if not len(images) == len(labels) == len(preds):
+        raise ValueError('List of images, labels and predictions must be of equal length')
+
+    for sample_class in sample_classes:
+
+        fig, ax = plt.subplots(4, len(sample_class))
+        fig.add_gridspec(4, len(sample_class), wspace=0.0, hspace=0.0)
+
+        for n, name in enumerate(sample_class):
+
+            name_indices = [i for i, j in enumerate(info) if j == name]
+
+            if len(name_indices) > 1:
+                im = torch.cat([images[index] for index in name_indices], dim=1)
+                label = torch.cat([labels[index] for index in name_indices], dim=1)
+                pred = torch.cat([preds[index] for index in name_indices], dim=1)
+            else:
+                im = images[name_indices[0]]
+                label = labels[name_indices[0]]
+                pred = preds[name_indices[0]]
+
+            ax[0, n].imshow(im[:, :], cmap='jet', vmin=0, vmax=1)
+            ax[1, n].imshow(label[:, :], cmap='jet', vmin=0, vmax=1)
+            ax[2, n].imshow(pred[:, :], cmap='jet', vmin=0, vmax=1)
+            ax[3, n].imshow(np.where(pred[:, :] >= 0.5, 1, 0), cmap='jet', vmin=0, vmax=1)
+            ax[0, n].axis('off')
+            ax[1, n].axis('off')
+            ax[2, n].axis('off')
+            ax[3, n].axis('off')
+        plt.show()
+
+        """
+        total_count += 1
+
 
         fig, axes = plt.subplots(3, count, figsize=(16, 7))
         if len(axes.shape) == 1:
@@ -71,11 +117,7 @@ def display(image, label, pred, info, v_min, v_max):
                 plt.setp(axes[m, n].get_xticklabels(), visible=False)
                 plt.setp(axes[m, n].get_yticklabels(), visible=False)
                 axes[m, n].tick_params(axis='both', which='both', length=0)
-        fig.suptitle(image_name)
-
-        fig_list.append(fig)
-
-    return fig_list
+        """
 
 
 def main(args):
@@ -86,93 +128,119 @@ def main(args):
         [t.ConvertDtype(torch.float32), t.ConvertDtype(torch.float32)],
         [t.Normalize((0, 1), (0, 255), return_type=torch.float32), None],
         [t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale),
-         t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale)],
+         t.QuasiResize(config.dataset.resize_shape, config.dataset.max_scale)]
     ])
 
     test_loader = get_dataloader(args.config_path, pair_compose, mode='test')
 
-    model = unets.UNet(3, 1, 32)
-    device = torch.device("cuda")
-    pre_trained = torch.load('../Test/weights/UNet_Train_randominit_unet_BCE_sdg.pt')
-    model.init_weights(pre_trained['model_state'])
+    sample_classes = config.sample_classes.class_granular
+    #sample_classes =[['img1', 'MAD6400_2014-07-01_manda_48@vhf_178333']]
+    metrics = SegMets()
 
-    model.to(device)
-    model.eval()
+    all_miou = []
+    all_dsc = []
+    all_iou_classwise = []
+    all_dsc_classwise = []
 
-    images, labels, pred, info_list = [], [], [], []
+    best_iou = 0
 
-    sample_classes = [['MAD6400_2008-07-02_arcd_60@vhf_400749', 'MAD6400_2009-06-10_arcd_60@vhf_422844',
-                       'MAD6400_2009-07-16_manda_60@vhf_655441', 'MAD6400_2011-06-01_manda_59',
-                       'MAD6400_2015-08-10_manda_59',
-                       'MAD6400_2015-08-13_manda_59', 'MAD6400_2015-08-20_manda_59'],
-                      ['MAD6400_2008-06-30_manda_60@vhf_060693', 'MAD6400_2009-07-14_manda_60@vhf_684778',
-                       'MAD6400_2009-07-17_manda_60@vhf_633279', 'MAD6400_2009-07-30_manda_60@vhf_779294',
-                       'MAD6400_2010-07-08_manda_59',
-                       'MAD6400_2010-07-09_manda_60@vhf_470083', 'MAD6400_2011-06-08_manda_59',
-                       'MAD6400_2011-06-09_manda_59',
-                       'MAD6400_2014-07-01_manda_48@vhf_178333', 'MAD6400_2015-08-12_manda_59'],
-                      ['MAD6400_2010-07-07_manda_60@vhf_576698']]
-
-    image_names = [item for sublist in sample_classes for item in sublist]
-
-    metrics = met.SegMets()
-    baseline_metric = met.SegMets()
-
+    best_images = [[], [], [], []]
     undo_scaling = t.UndoQuasiResize(t.QuasiResize([64, 64], 2))
+    for i in range(5):
 
-    for data in test_loader:
-        image, mask, info = data
+        images, labels, pred, info_list = [], [], [], []
+        print('Testing')
+        model = load_model(args.config_path)
+        device = torch.device("cuda")
+        pre_trained = torch.load(
+            f'../Test/weights/Unet_plusspluss_64_pretrain-False_loss-DiceBCELoss_optim-adam_generated_dataset_random-erase_Hflip-Cadj_/lr_0.0005_wd_0.001_betas_0.9-0.999_momentum_0.9_freezed-None_{str(i)}.pt')
+        model.load_state_dict(pre_trained['model_state'])
+        model.to(device)
+        model.eval()
 
-        image = image.to(device)
-        mask = mask.to(device)
+        for data in test_loader:
+            image, mask, info = data
 
-        with torch.no_grad():
-            res = model(image)
+            image = image.to(device)
+            mask = mask.to(device)
 
-            res = res.view(1, 64, 64)
-            image = image.view(3, 64, 64)
-            mask = mask.view(1, 64, 64)
+            with torch.no_grad():
+                res = model(image)
 
-            (lr, rr), (lc, rc) = info['split_info']
-            image_original_size = undo_scaling(image.detach().cpu(), [rr - lr, rc - lc])
-            mask_original_size = undo_scaling(mask.detach().cpu(), [rr - lr, rc - lc])
-            result_original_size = undo_scaling(res.detach().cpu(), [rr - lr, rc - lc])
+                if isinstance(res, tuple):
+                    if config.model_init.deep_supervision:
+                        res = (res[0] + res[1] + res[2] + res[3]) / len(res)
+                    else:
+                        res = res[0]
 
-            for i, name in enumerate(info['image_name']):
+                res = res.view(1, 64, 64)
+                image = image.view(3, 64, 64)
+                mask = mask.view(1, 64, 64)
 
-                info['image_name'][i] = info['image_name'][i].rpartition('_')[0].rpartition('_')[0]
+                (lr, rr), (lc, rc) = info['split_info']
 
-            metrics(result_original_size, mask_original_size, info['image_name'])
+                image_original_size = undo_scaling(image.detach().cpu(), (rr - lr, rc - lc))
+                mask_original_size = undo_scaling(mask.detach().cpu(), (rr - lr, rc - lc))
+                result_original_size = undo_scaling(res.detach().cpu(), (rr - lr, rc - lc))
 
-            baseline_metric(torch.randint(0, 2, result_original_size.shape), mask_original_size, info['image_name'])
+                info_1 = remove_from_dataname(info['image_name'])
 
-            images.append(image_original_size[0, :, :])
-            labels.append(mask_original_size[0, :, :])
-            # res = (res >= 0.5).float().detach().cpu().numpy()[0, :, :]
-            res = (result_original_size >= 0.5).float().view(1, rr - lr, rc - lc)[0, :, :]
-            pred.append(res)
-            info_list.append(info)
+                metrics(result_original_size, mask_original_size, info_1)
+                images.append(image_original_size[0, :, :])
+                labels.append(mask_original_size[0, :, :])
+                pred.append(result_original_size[0, :, :])
+                info_list.append(info_1[0])
 
-    print(f'mIoU: {metrics.mIoU()}')
-    #print(f'AUC: {metrics.auc()}')
-    #print(f'Accuracy: {metrics.accuracy()}')
-    #print(f'Precision: {metrics.precision()}')
-    #print(f'Dice Coef: {metrics.dice()}')
+        miou = metrics.mIoU(sample_classes=sample_classes, multidim_average="global")
+        dsc = metrics.dice(sample_classes=sample_classes, multidim_average='global')
+        miou_classwise = metrics.mIoU(sample_classes=sample_classes, multidim_average="classwise")
+        dsc_classwise = metrics.dice(sample_classes=sample_classes, multidim_average='classwise')
+        metrics.reset()
 
-    baseline_fnr_fpr = baseline_metric.FPR_FNR(sample_classes=sample_classes)
-    alternative_fnr_fpr = metrics.FPR_FNR(sample_classes=sample_classes)
+        all_miou.append(miou)
+        all_dsc.append(dsc)
+        all_iou_classwise.append(miou_classwise)
+        all_dsc_classwise.append(dsc_classwise)
 
-    print(baseline_fnr_fpr)
-    print(alternative_fnr_fpr)
+        if miou > best_iou:
+            best_iou = miou
+            best_images[0], best_images[1], best_images[2], best_images[3] = images, labels, pred, info_list
 
-    print(sde(alternative_fnr_fpr, baseline_fnr_fpr))
-    print(cev(alternative_fnr_fpr, baseline_fnr_fpr))
-    # figs = display(images, labels, pred, info_list, 0, 1)
+    print(f'mIoU - mean: {np.mean(all_miou)}, std: {np.std(all_miou)}, all: {all_miou}')
+    print(f'DSC -  mean: {np.mean(all_dsc)}, std: {np.std(all_dsc)}, all: {all_dsc}')
+    print(all_miou)
+    print(np.mean(all_iou_classwise, axis=0), np.std(all_iou_classwise, axis=0))
+    print(np.mean(all_dsc_classwise, axis=0), np.std(all_dsc_classwise, axis=0))
+    """
+    fig, ax = plt.subplots(2, 3)
+    fig.suptitle('Unet64-randominit - Original Dataset')
+    ax[0, 0].imshow(best_images[0][0], cmap='jet', vmin=0, vmax=1)
+    ax[0, 0].set_title('Image')
+    ax[0, 0].set_ylabel('Removed easy')
+    ax[0, 1].imshow(best_images[1][0], vmin=0, vmax=1, cmap='jet')
+    ax[0, 1].set_title('GT')
+    ax[0, 2].imshow(torch.where(best_images[2][0] >= 0.5, 1, 0), vmin=0, vmax=1, cmap='jet')
+    ax[0, 2].set_title('Predicted')
+    ax[1, 0].imshow(best_images[0][1], cmap='jet', vmin=0, vmax=1)
+    ax[1, 0].set_ylabel('Original')
+    ax[1, 1].imshow(best_images[1][1], vmin=0, vmax=1, cmap='jet')
+    ax[1, 2].imshow(torch.where(best_images[2][1] >= 0.5, 1, 0), vmin=0, vmax=1, cmap='jet')
+    for i in range(2):
+        for j in range(3):
+            ax[i, j].set_xticks([])
+            ax[i, j].set_yticks([])
+    plt.savefig('unet64-randominit-orgdata-easyremoved', dpi=400, bbox_inches='tight')
+    plt.show()
+    """
 
-    # plt.show()
+    #display(best_images[0], best_images[1], best_images[2], best_images[3], sample_classes)
+    #save_images(best_images[0], best_images[1], best_images[2],
+    #            save_path=f'C:\\Users\\dombe\\PycharmProjects\\Test\\results\\images\\Unetpluss64-gendata-aug',
+    #            names=best_images[3])
 
 
 if __name__ == '__main__':
+
     torch.manual_seed(666)
     parser = argparse.ArgumentParser(description='Testing model for PMSE signal segmentation')
     parser.add_argument('--config-path', type=str, default='models\\options\\unet_config.ymal',

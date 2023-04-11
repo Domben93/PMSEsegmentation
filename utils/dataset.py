@@ -10,6 +10,8 @@ from typing import Any, Callable, Optional, Tuple, TypeVar, Union, Dict
 from imageio.v2 import imread
 from torch import Tensor
 
+__all__ = ['PMSE_Dataset', 'PMSEDatasetPresaved']
+
 
 class PMSE_Dataset(Dataset):
 
@@ -138,7 +140,7 @@ class PMSEDatasetPresaved(Dataset):
 
 
 def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoader:
-    valid_modes = ['train', 'validate', 'test']
+    valid_modes = ['train', 'validate', 'test', 'single_test']
 
     if mode not in valid_modes:
         raise ValueError(f'Mode {mode} is not a valid mode. Choose between {valid_modes}')
@@ -161,8 +163,12 @@ def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoa
         pmse_data = os.path.join(data_path, 'data')
         pmse_label = os.path.join(data_path, 'label')
 
+    elif mode == valid_modes[3]:
+        data_path = config['dataset']['path_test']
+        pmse_data = os.path.join(data_path, 'single_test', 'data')
+        pmse_label = os.path.join(data_path, 'single_test', 'label')
     else:
-        raise Exception
+        raise ValueError(f'invalid mode given, must be one of the following: {valid_modes}. Got {mode}.')
 
     if mode == valid_modes[0]:
         dataset = PMSE_Dataset(pmse_data,
@@ -187,10 +193,17 @@ def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoa
                                last_min_overlap=0,
                                lock_vertical=True)
 
-        dataloader = DataLoader(dataset,
-                                batch_size=1,
-                                num_workers=config['dataloader']['num_workers'],
-                                shuffle=False)
+        if valid_modes == 'validate':
+            dataloader = DataLoader(dataset,
+                                    batch_size=1,
+                                    num_workers=config['dataloader']['num_workers'],
+                                    shuffle=False)
+        else:
+
+            dataloader = DataLoader(dataset,
+                                    batch_size=1,
+                                    num_workers=config['dataloader']['num_workers'],
+                                    shuffle=False)
 
     return dataloader
 

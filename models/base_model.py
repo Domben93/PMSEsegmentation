@@ -21,7 +21,7 @@ class BaseModel(nn.Module):
 
     def init_random_weights(self,
                             module: nn.Module,
-                            init_func: Callable = nn.init.xavier_uniform_,
+                            init_func: Callable = nn.init.kaiming_normal_,
                             init_layer: Union[List, Any] = nn.Conv2d,
                             _prefix: Optional[str] = None) -> NoReturn:
         """
@@ -54,7 +54,7 @@ class BaseModel(nn.Module):
                         else:
                             key = _prefix + '.' + child_name + '.' + layer_name + '.weight'
 
-                        state_dict_copy[key] = init_func(torch.empty(state_dict_copy[key].shape))
+                        state_dict_copy[key] = init_func(torch.empty(state_dict_copy[key].shape), a=1e-2)
 
             else:
                 if isinstance(module.get_submodule(child_name), nn.Module): # New module found, resetting prefix
@@ -72,7 +72,7 @@ class BaseModel(nn.Module):
     def init_weigths_by_layer(self, old_model: Union[nn.Module, dict],
                               model_block_linkage: Union[List[int], OrderedDict[int, int]] = 'auto',
                               rest_random: bool = True,
-                              rest_random_func: Callable = nn.init.xavier_uniform_) -> NoReturn:
+                              rest_random_func: Callable = nn.init.kaiming_normal_) -> NoReturn:
         """
         Initiate model with weights by layer. For 'auto' the module buildup (i.e., how the different layer are stacked
         in the nn.Sequential) must be the same as "self" for the blocks/layers that you want to transfer weights.
@@ -143,7 +143,7 @@ class BaseModel(nn.Module):
                             continue
                         print(new_statedict_copy[new_keys[num]].shape)
                         print(new_keys[num])
-                        new_statedict_copy[new_keys[num]] = rest_random_func(torch.empty(new_statedict_copy[new_keys[num]].shape))
+                        new_statedict_copy[new_keys[num]] = rest_random_func(torch.empty(new_statedict_copy[new_keys[num]].shape), a=1e-2)
 
         self.load_state_dict(new_statedict_copy)
 
