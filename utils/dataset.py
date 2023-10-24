@@ -4,13 +4,16 @@ import numpy as np
 import torch
 import yaml
 from torch.utils.data import Dataset, DataLoader
-from .splitdata import SplitSegData
+from .splitdata import *
 from .transforms import *
 from typing import Any, Callable, Optional, Tuple, TypeVar, Union, Dict
 from imageio.v2 import imread
 from torch import Tensor
 
-__all__ = ['PMSE_Dataset', 'PMSEDatasetPresaved']
+__all__ = ['PMSE_Dataset',
+           'PMSEDatasetPresaved',
+           'get_dataloader',
+           'PMSEDatasetInference']
 
 
 class PMSE_Dataset(Dataset):
@@ -68,6 +71,41 @@ class PMSE_Dataset(Dataset):
         mask = np.array(mask)
 
         return image, mask, name
+
+
+class PMSEDatasetInference(Dataset):
+
+    def __init__(self, image_dir: str,
+                 transform: Optional[Callable] = None,
+                 percent_overlap: float = None,
+                 last_min_overlap: Union[int, float] = None,
+                 **kwargs):
+        self.transform = transform
+
+        self.dataset = SplitDataInference(image_dir=image_dir,
+                                          split_overlap=percent_overlap,
+                                          last_min_overlap=last_min_overlap,
+                                          **kwargs)
+
+    def __getitem__(self, item) -> Tuple[Tensor, Dict]:
+        image, name = self.dataset[item]
+
+        image = torch.from_numpy(image.transpose((2, 0, 1)))
+
+        if self.transform:
+
+            image = self.transform(image)
+
+        return image, name
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def get_original_image_and_mask(self, item):
+        image, name = self.dataset[item]
+        image = np.array(image)
+
+        return image, name
 
 
 class PMSEDatasetPresaved(Dataset):
@@ -206,4 +244,3 @@ def get_dataloader(config_path: str, transforms, mode: str = 'train') -> DataLoa
                                     shuffle=False)
 
     return dataloader
-
