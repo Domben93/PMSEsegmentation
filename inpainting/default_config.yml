@@ -1,0 +1,64 @@
+### EXECUTION SETTING ###
+# The using GPU ID
+cuda_id: 0
+# whether you use comet-ml for visualizing the training procedure
+comet: False
+# The Running mode (train or test)
+mode: train
+# fine-tuning specify the ckpt dir name you want to load the model params.
+# if you want to turn off the fine-tuning mode Set to .
+finetune: null #pretrained_pconv.pth
+# The state path which you want to resume the training
+resume: False
+
+## Generate masks before training starts if True
+generate_masks: True
+num_masks: 50
+
+### TRAINING PARAMETERS ###
+# the number of max iteration
+max_iter: 50000
+# the batch size
+batch_size: 18
+
+### DATA AUGMENTATION ###
+# the mask augmentaiton flag
+mask_augment: False
+
+### NETWORK SETTING ###
+# UNet layer size
+layer_size: 5
+
+### LOSS PARAMETERS ###
+valid_coef: 1.0
+hole_coef: 6.0
+tv_coef: 0.1
+perc_coef: 0.05
+style_coef: 120.0
+# total variation calcuration method (mean or sum)
+tv_loss: mean
+
+### OPTIMIZATION PARAMETERS ###
+optim: Adam
+initial_lr: 0.0005
+finetune_lr: 0.0001
+momentum: 0
+weight_decay: 0
+
+### LOG INTERVALS ###
+# viaulizing the output images
+vis_interval: 50
+# saving the model
+save_model_interval: 1000
+# printing the losses to standard output line
+log_interval: 5
+
+scheduler: False
+step_size: 2000
+gamma: 0.5
+last_epoch: -1
+
+### DIRECTORY PATH ###
+data_root: C:\Users\dombe\PycharmProjects\PMSE-segmentation\inpainting\data
+ckpt: ckpt
+
