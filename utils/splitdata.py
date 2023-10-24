@@ -11,6 +11,11 @@ from pathlib import Path
 from collections import OrderedDict
 import cv2
 
+__all__ = ['SplitSegData',
+           'SplitDataInference',
+           'StratifiedSegDataSplit'
+           ]
+
 
 class SplitSegData:
     """
@@ -278,6 +283,220 @@ class SplitSegData:
 
                     image_split.update({num: [(left_row, right_row), (left_col, right_col)]})
                     num += 1
+
+            meta_data = self.__generate_metadata(image, num, image_split, row, col, horizontal_overlap,
+                                                 vertical_overlap)
+
+            split_info.update({im_name: meta_data})
+
+        return split_info
+
+    def save_split_to_folder(self, path: str, extension: str = None):
+
+        if not os.path.exists(path):
+            raise FileNotFoundError(f'Could not find: {path}')
+
+        if os.path.exists(path):
+            raise FileExistsError(f'No such folder exists: "{path}"')
+
+        os.mkdir(path)
+
+        for image in list(self.split_info.keys()):
+            split_list = list(image.keys())
+            for split in split_list:
+                print(split)
+
+    @staticmethod
+    def __generate_metadata(im, num, im_split, row, col, h_overlap, v_overlap) -> Dict:
+        meta_data = {
+            'original_size': im.shape,
+            'number_of_splits': num,
+            'split_array': np.reshape(np.arange(1, num + 1), (row + 1 + (1 if v_overlap else 0),
+                                                              col + 1 + (1 if h_overlap else 0))),
+            'splits': im_split
+        }
+        return meta_data
+
+    @staticmethod
+    def __verify_split(split_shape, split_val, overlap=0) -> Union[int, float]:
+        try:
+            if overlap:
+                split_shape = split_shape - split_val
+                split_val = split_val - overlap
+                return 1 + split_shape // split_val if (1 < split_val < split_shape) else 1
+            else:
+                return split_shape // split_val if (1 < split_val < split_shape) else 1
+        except:
+            return 1
+
+    def __last_overlap(self, im_direction_shape, split, pixel_overlap, number_of_splits):
+
+        overlap = im_direction_shape % ((split - pixel_overlap) * (number_of_splits - 1) + split)
+
+        if isinstance(self.last_min_overlap, int) and overlap >= self.last_min_overlap:
+            return overlap
+
+        elif isinstance(self.last_min_overlap, float):
+            if overlap >= int(self.last_min_overlap * split):
+                return overlap
+            else:
+                return 0
+        else:
+            return 0
+
+
+class SplitDataInference:
+
+    def __init__(self, image_dir: str,
+                 last_min_overlap: Union[int, float] = 0,
+                 get_trailing: bool = False,
+                 **kwargs):
+        self.image_dir = image_dir
+
+        self.square_split = True
+        self.horizontal_split = 0
+        self.horizontal_overlap = True
+        self.last_min_overlap = last_min_overlap
+        self.get_trailing = get_trailing
+
+        if isinstance(last_min_overlap, float):
+            assert 0 < last_min_overlap <= 1.0, 'If minimum overlap if given as float it must be in the interval(0,1]' \
+                                                '(percentage of the split size that is the minimum allowed last overlap).'
+
+            self.last_min_overlap = last_min_overlap
+            self.horizontal_overlap = True
+
+        elif isinstance(last_min_overlap, int) and last_min_overlap >= 1:
+            self.last_min_overlap = last_min_overlap
+            self.horizontal_overlap = True
+
+        elif self.get_trailing:
+            self.horizontal_overlap = True
+            self.last_min_overlap = 0
+
+        if not os.path.exists(self.image_dir):
+            raise FileNotFoundError(f'Could not find: {self.image_dir}')
+
+        self.split_info = self._split_data_square()
+
+    def __len__(self):
+        number_of_images = 0
+        for img in list(self.split_info.keys()):
+            number_of_images += self.split_info[img]['number_of_splits']
+        return number_of_images
+
+    def __getitem__(self, item: int) -> Tuple[Any, Any]:
+
+        if not isinstance(item, int):
+            raise TypeError(f'index must be a integer. Got {type(item)}')
+
+        if item >= len(self):
+            raise ValueError(f'index value must be >= number of images {len(self)}. Got {item}')
+
+        img_path = os.path.join(self.image_dir)
+
+        images_ = os.listdir(img_path)
+
+        global_idx = item
+
+        for i, img_name in enumerate(list(self.split_info.keys())):
+
+            local_size = self.split_info[img_name]['number_of_splits']
+
+            if global_idx >= local_size:
+                global_idx -= local_size
+                continue
+
+            else:
+                split = self.split_info[img_name]['splits'][global_idx]
+
+                (lr, rr), (lc, rc) = split
+
+                image = default_loader(os.path.join(self.image_dir, images_[i]))[lr:rr, lc:rc]
+
+                info = {'image_name': img_name,
+                        'split_info': split}
+
+                return image, info
+
+    def get_split(self):
+        return self.split_info
+
+    def _split_data_square(self) -> Dict:
+
+        image_list = sorted(os.listdir(self.image_dir))
+
+        image_name_keys = []
+
+        for im in image_list:
+            image_name_keys.append(Path(im).stem)
+        image_name_keys.sort()
+
+        split_info = OrderedDict()
+
+        for im_name, im in tqdm(zip(image_name_keys, image_list), desc='Splitting images and mask pair',
+                                     total=len(image_list)):
+
+            image = default_loader(os.path.join(self.image_dir, im), return_type=ndarray)
+
+            assert isinstance(image, ndarray)
+
+            if self.square_split:
+                self.horizontal_split = self.vertical_split = min(image.shape[0], image.shape[1])
+
+            num_horizontal_split = self.__verify_split(image.shape[1], self.horizontal_split)
+            num_vertical_splits = self.__verify_split(image.shape[0], self.vertical_split)
+
+            image_split = OrderedDict()
+            right_row, left_row, left_col, right_col = 0, 0, 0, 0
+            row, col, horizontal_overlap, vertical_overlap = 0, 0, 0, 0
+            num = 0
+
+            for row in range(num_vertical_splits):
+                left_row = right_row
+                if image.shape[0] <= int(self.vertical_split or image.shape[0]):
+                    # warnings.warn(f'Row split chosen is bigger or equal to image rows.\n'
+                    #              f'Image and mask ({im_name}) will keep original row shape')
+                    right_row = image.shape[0]
+                else:
+                    right_row = left_row + self.vertical_split
+
+                right_col, left_col = 0, 0
+
+                for col in range(num_horizontal_split):
+                    left_col = right_col if right_col > 0 else 0
+                    if image.shape[1] <= int(self.horizontal_split or image.shape[1]):
+
+                        right_col = image.shape[1]
+
+                    else:
+                        right_col = left_col + self.horizontal_split
+
+                    image_split.update({num: [(left_row, right_row), (left_col, right_col)]})
+                    num += 1
+
+                if self.horizontal_overlap:
+                    # horizontal_overlap = image.shape[1] % ((self.horizontal_split - horizontal_pixel_overlap) *
+                    #                            (num_horizontal_split - 1) + self.horizontal_split)
+
+                    horizontal_overlap = self.__last_overlap(image.shape[1],
+                                                             self.horizontal_split,
+                                                             0,
+                                                             num_horizontal_split)
+
+                    if horizontal_overlap:
+
+                        if self.get_trailing:
+
+                            left_col = right_col
+                            right_col = left_col + horizontal_overlap
+
+                        else:
+                            left_col = left_col + horizontal_overlap
+                            right_col = right_col + horizontal_overlap
+
+                        image_split.update({num: [(left_row, right_row), (left_col, right_col)]})
+                        num += 1
 
             meta_data = self.__generate_metadata(image, num, image_split, row, col, horizontal_overlap,
                                                  vertical_overlap)
