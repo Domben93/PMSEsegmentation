@@ -144,7 +144,7 @@ class MaskGenerator:
         return mask_copy
 
 
-def save_generated_masks(train_path, val_path, num=200, masks_pr_image=20, max_sizes: List = None):
+def save_generated_masks(train_path, val_path, num=200, masks_pr_image=20, max_sizes: List = None, seed=42):
     """
 
     :param train_path:
@@ -155,7 +155,7 @@ def save_generated_masks(train_path, val_path, num=200, masks_pr_image=20, max_s
     Args:
         max_sizes:
     """
-    mask_gen = MaskGenerator(rand_seed=42, figs_max_size=max_sizes, pad_range=2)
+    mask_gen = MaskGenerator(rand_seed=seed, figs_max_size=max_sizes, pad_range=2)
 
     dataset_train = PMSE_Dataset(os.path.join(train_path, 'data'), os.path.join(train_path, 'label'))
     dataset_val = PMSE_Dataset(os.path.join(val_path, 'data'), os.path.join(val_path, 'label'))
