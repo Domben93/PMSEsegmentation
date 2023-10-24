@@ -125,12 +125,12 @@ def plot_relevancemaps(path, sub_folders, name_list, image_list, save_name, figs
 
 def plot_relevancemaps_2(path, sub_folders, name_list, image_list, save_name, figsize=(8, 8), cmap=None):
     fig = plt.figure(constrained_layout=True, figsize=figsize)
-    h_ratio = [1, .05]
+    h_ratio = [1, .02]
     outer_grid = gridspec.GridSpec(2, 1, figure=fig, height_ratios=h_ratio)
 
-    inner_grid1 = gridspec.GridSpecFromSubplotSpec(ncols=len(image_list), nrows=(len(sub_folders) + 1),
+    inner_grid1 = gridspec.GridSpecFromSubplotSpec(nrows=len(image_list), ncols=(len(sub_folders) + 1),
                                                    subplot_spec=outer_grid[0], hspace=0.05, wspace=0.05)
-
+    print(inner_grid1)
     folder = glob.glob(path + '/' + sub_folders[0])
     org_image_path = glob.glob(folder[0] + '/' + 'images' + '/*')
     org_mask_path = glob.glob(folder[0] + '/' + 'labels' + '/*')
@@ -226,19 +226,19 @@ if __name__ == '__main__':
     name_list = [r'UNet$^{64}$' + '\nRandomInit', r'UNet$^{64}$' + '\nPretrained',
                  r'UNet++$^{64}$' + '\nRandomInit', r'UNet++$^{64}$' + '\nPretrained']
 
-    image_list = [2, 9, 7, 15, 11, 14]
+    #image_list = [2, 9, 7, 15, 11, 14]
+    image_list = [2, 9, 7, 15]
+    plot_predictions(folder_path, path_list, name_list, image_list, save_name='Bad-initial-selection', figsize=(6, 5))
 
-    plot_predictions(folder_path, path_list, name_list, image_list, save_name='Bad-initial-selection', figsize=(6, 8))
-
-    image_list = [3, 4, 6, 10, 16, 12]
-
-    plot_predictions(folder_path, path_list, name_list, image_list, save_name='Good-initial-selection', figsize=(6, 8))
+    #image_list = [3, 4, 6, 10, 16, 12]
+    image_list = [6, 10, 16, 12]
+    plot_predictions(folder_path, path_list, name_list, image_list, save_name='Good-initial-selection', figsize=(6, 5))
     """
 
     # Loss function experiments display
     # Dice, BCE and Focal loss
-    image_list_hard = [2, 9, 7, 15, 11, 14]
-    image_list_easy = [3, 4, 6, 10, 16, 12]
+    image_list_hard = [2, 9, 7, 15]
+    image_list_easy = [6, 10, 16, 12]
     """
     path_list = ['Unetpluss64-diceloss',
                  'Unetpluss64-bce',
@@ -272,8 +272,8 @@ if __name__ == '__main__':
     name_list = ['No Aug', 'Image-Aug',
                  'ObjAug', 'ObjAug\n+ Image-Aug']
 
-    plot_predictions(folder_path, path_list, name_list, image_list_hard, save_name='Hard-dataset', figsize=(6, 8))
-    plot_predictions(folder_path, path_list, name_list, image_list_easy, save_name='Easy-dataset', figsize=(6, 8))
+    plot_predictions(folder_path, path_list, name_list, image_list_hard, save_name='Hard-dataset', figsize=(6, 5))
+    plot_predictions(folder_path, path_list, name_list, image_list_easy, save_name='Easy-dataset', figsize=(6, 5))
     """
     """
     path_list = ['Unetpluss64-diceloss',
@@ -289,10 +289,10 @@ if __name__ == '__main__':
                  r'$\mathcal{L}_{Dice} + \mathcal{L}_{B}$' + '\n- Rebalance'
                  ]
 
-    plot_predictions(folder_path, path_list, name_list, image_list_hard, save_name='Hard-loss', figsize=(6, 8))
-    plot_predictions(folder_path, path_list, name_list, image_list_easy, save_name='Easy-loss', figsize=(6, 8))
+    plot_predictions(folder_path, path_list, name_list, image_list_hard, save_name='Hard-loss', figsize=(6, 4))
+    plot_predictions(folder_path, path_list, name_list, image_list_easy, save_name='Easy-loss', figsize=(6, 4))
     """
-    """
+
     path_list = ['Unetpluss64-dicebce', 'relevance_map/unetpluss64-dice-noaug',
                  'relevance_map/unetpluss64-dicebce-noaug', 'relevance_map/unetpluss64-orgdata-aug',
                  'relevance_map/unetpluss64-gendata-aug']
@@ -300,13 +300,13 @@ if __name__ == '__main__':
                  'ImAug\n' + r'$(\mathcal{L}_{Dice} + \mathcal{L}_{BCE})$',
                  'ObjAug + ImAug\n' + r'$(\mathcal{L}_{Dice} + \mathcal{L}_{BCE})$']
 
-    image_list = [3, 4, 6, 10, 9, 12]
-    plot_relevancemaps_2(folder_path, path_list, name_list, image_list, save_name='LPR_aug', figsize=(6, 8), cmap=new_colorspace)
-    """
+    image_list = [4, 10, 9]
+    plot_relevancemaps_2(folder_path, path_list, name_list, image_list, save_name='LPR_aug', figsize=(6, 4), cmap=new_colorspace)
+
     path_list = ['Unetpluss64-dicebce', 'relevance_map/unet32-pretrained',
                  'relevance_map/unet64-pretrained', 'relevance_map/unetpluss32-pretrained',
                  'relevance_map/unetpluss64-pretrained']
     name_list = [r'UNet$^{32}$', r'UNet$^{64}$', r'UNet++$^{32}$', r'UNet++$^{64}$']
-    image_list = [3, 4, 6, 10, 9, 12]
-    plot_relevancemaps_2(folder_path, path_list, name_list, image_list, save_name='LPr-pretrained', figsize=(6, 8),
+    #image_list = [3, 4, 6, 10, 9, 12]
+    plot_relevancemaps_2(folder_path, path_list, name_list, image_list, save_name='LPr-pretrained', figsize=(6, 4),
                          cmap=new_colorspace)
