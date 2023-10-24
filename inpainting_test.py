@@ -4,7 +4,7 @@ from typing import Tuple
 
 from torch import Tensor
 
-from partial_conv.src.model import PConvUNet
+from inpainting.src.model import PConvUNet
 from PIL import Image
 import argparse
 import torch
@@ -260,9 +260,9 @@ if __name__ == '__main__':
     random.seed(42)
     parser = argparse.ArgumentParser(description="Specify the inputs")
     parser.add_argument('--model', type=str,
-                        default="C:\\Users\\dombe\\PycharmProjects\\Test\\partial_conv\\ckpt\\0310_1433_18\\models\\11000.pth")
+                        default='../PMSE-segmentation/partial_conv/ckpt/0310_1433_18/models/11000.pth')
     parser.add_argument('--gpu_id', type=int, default=0)
-    parser.add_argument('--data_path', type=str, default="C:\\Users\\dombe\\PycharmProjects\\Test\\dataset\\Test")
+    parser.add_argument('--data_path', type=str, default="C:\\Users\\dombe\\PycharmProjects\\PMSE-segmentation\\dataset\\Test")
     args = parser.parse_args()
 
     predict(args)
