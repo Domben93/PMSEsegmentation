@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 from torchvision.utils import save_image
 from utils.transforms import *
-from partial_conv.src.model import PConvUNet
+from inpainting.src.model import PConvUNet
 from utils.dataset import PMSE_Dataset
 import os
 import math
@@ -357,7 +357,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate ObjectAug data')
     parser.add_argument('--data-path', type=str, default='../PMSE-segmentation/dataset/Train')
     parser.add_argument('--model-path', type=str,
-                        default='../PMSE-segmentation/partial_conv/ckpt/0310_1433_18/models/11000.pth')
+                        default='../PMSE-segmentation/partial_conv/weights/inpainting_model_weights.pth')
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--save-path', type=str, default='../PMSE-segementation/dataset/Train/generated_data')
     parser.add_argument('--padding', type=int, default=1, help='Padding range of ground-truth')
