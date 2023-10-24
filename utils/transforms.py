@@ -1,20 +1,15 @@
 import random
-
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import Union, Generic, TypeVar, List, Tuple, Optional, Any, NoReturn, Literal, Sequence, Callable
+from typing import Union, TypeVar, List, Tuple, Optional, Any, NoReturn, Literal, Sequence, Callable
 import math
 from PIL import Image
 import torch
-import torch.nn as nn
 from torch import Tensor
 from numpy import ndarray
 from torchvision.transforms import functional as f
 from torch.nn.functional import pad
-from scipy.interpolate import griddata
-from skimage.restoration import inpaint
-from skimage import measure
-from partial_conv.src.model import PConvUNet
+
 
 __all__ = [
     "Compose",
@@ -82,6 +77,10 @@ class Compose:
         list_string += '\n>'
         return list_string
 
+    def __add__(self, other):
+        self.transforms += other.transform
+        return self
+
 
 class PairCompose:
 
@@ -127,6 +126,10 @@ class PairCompose:
                 list_string += f'{i}'
         list_string += '\n>'
         return list_string
+
+    def __add__(self, other):
+        self.transforms += other.transform
+        return self
 
 
 class ConvertDtype(Transform):

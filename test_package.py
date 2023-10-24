@@ -5,9 +5,9 @@ from models.unets import UNet
 
 if __name__ == '__main__':
     torch.manual_seed(666)
-    tr_path = '/partial_conv/data/train'
-    val_path = '/partial_conv/data/validation'
-
+    tr_path = 'inpainting/data/train'
+    val_path = 'inpainting/data/validation'
+    """
     model = Generic_UNetPlusPlus(input_channels=3,
                                  base_num_features=64,
                                  num_classes=1,
@@ -21,9 +21,9 @@ if __name__ == '__main__':
 
 
     pre_trained = torch.load(
-        f'../Test/weights/Unet_plusspluss_64_pretrain-False_loss-DiceBCELoss_optim-adam_generated_dataset_CAdj-Hflip/lr_0.0003_wd_0.006_betas_0.9-0.999_momentum_0.9_freezed-None_0.pt')
-
-    #save_generated_masks(tr_path, val_path, num=200, max_sizes=[10, 20], masks_pr_image=50)
+        f'../PMSE-segmentation/weights/Unet_plusspluss_64_pretrain-False_loss-DiceBCELoss_optim-adam_generated_dataset_CAdj-Hflip/lr_0.0003_wd_0.006_betas_0.9-0.999_momentum_0.9_freezed-None_0.pt')
+    """
+    save_generated_masks(tr_path, val_path, num=200, max_sizes=[10, 20], masks_pr_image=50)
     """
     import torch
 

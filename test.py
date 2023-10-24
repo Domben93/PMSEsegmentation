@@ -42,9 +42,7 @@ def main(args):
         model = load_model(args.config_path)
         device = torch.device("cuda")
         pre_trained = torch.load(
-            f'../PMSE-segmentation/weights/'
-            f'Unet_plusspluss_64_pretrain-False_loss-DiceBCELoss_optim-adam_generated_dataset_random-erase_Hflip-Cadj_/'
-            f'lr_0.0005_wd_0.001_betas_0.9-0.999_momentum_0.9_freezed-None_{str(i)}.pt')
+            f'../PMSE-segmentation/weights/Unet_plusspluss_64_pretrain-False_loss-DiceBCELoss_optim-adam_generated_dataset_shift_Hflip-Cadj_/lr_0.0008_wd_0.001_betas_0.9-0.999_momentum_0.9_freezed-None_{str(i)}.pt')
         model.load_state_dict(pre_trained['model_state'])
         model.to(device)
         model.eval()
@@ -105,7 +103,7 @@ def main(args):
 
     #display(best_images[0], best_images[1], best_images[2], best_images[3], sample_classes)
     #save_images(best_images[0], best_images[1], best_images[2],
-    #            save_path=f'C:\\Users\\dombe\\PycharmProjects\\Test\\results\\images\\Unetpluss64-gendata-aug',
+    #            save_path=f'C:\\Users\\dombe\\PycharmProjects\\PMSE-segmentation\\results\\images\\Unetpluss64-gendata-aug',
     #            names=best_images[3])
 
 

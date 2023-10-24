@@ -34,8 +34,26 @@ __all__ = [
     'EarlyStopper',
     'remove_from_dataname_extended',
     'save_images',
-    'display'
+    'display',
+    'check_extension',
+    'save_results'
 ]
+
+EXTENSIONS = ['.mat', '.png', '.jpg']
+
+
+def check_extension(path) -> Tuple[bool, str]:
+    extension = None
+    for filename in os.listdir(path):
+        if os.path.isfile(os.path.join(path, filename)):
+            if extension is None:
+                extension = os.path.splitext(filename)[1]
+            elif os.path.splitext(filename)[1] != extension:
+                return False, extension
+            elif os.path.splitext(filename)[1] not in EXTENSIONS:
+                return False, extension
+
+    return True, extension
 
 
 def default_loader(path: str, return_type: Union[Type[Image.Image], Type[np.ndarray]] = np.ndarray, **kwargs) -> Union[
@@ -352,6 +370,7 @@ def display(images, labels, preds, info, sample_classes):
 
 
 def save_images(images, labels, preds, save_path, names):
+
     if not len(images) == len(labels) == len(preds):
         raise ValueError('List of images, labels and predictions must be of equal length')
 
@@ -377,6 +396,20 @@ def save_images(images, labels, preds, save_path, names):
         save_image(im, save_path + '/images/' + f'im_{info}' + '.png')
         save_image(label, save_path + '/labels/' + f'mask_{info}' + '.png')
         save_image(pred, save_path + '/preds/' + f'label_{info}' + '.png')
+
+
+def save_results(preds, save_path, names):
+
+    for info in names:
+
+        name_indices = [i for i, j in enumerate(names) if j == info]
+
+        if len(name_indices) > 1:
+            pred = torch.cat([preds[index] for index in name_indices], dim=1)
+        else:
+            pred = preds[name_indices[0]]
+
+        save_image(pred, save_path + f'result_{info}' + '.png')
 
 
 if __name__ == '__main__':

@@ -251,9 +251,9 @@ def main(args):
     df = pd.DataFrame(pd_data)
 
     if not os.path.exists(f'../Test/results/{writer_name}'):
-        os.mkdir(f'../Test/results/{writer_name}')
+        os.mkdir(f'../PMSE-segmentation/results/{writer_name}')
 
-    df.to_csv(f'../Test/results/{writer_name}/{file_name}_all.csv', index=False)
+    df.to_csv(f'../PMSE-segmentation/results/{writer_name}/{file_name}_all.csv', index=False)
 
 
 if __name__ == '__main__':
